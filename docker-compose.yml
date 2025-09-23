@@ -15,6 +15,20 @@ services:
     restart: unless-stopped
     command: ./qdrant --config-path /qdrant/config/production.yaml
 
+  # Qdrant Web UI
+  qdrant-ui:
+    image: qdrant/qdrant:latest
+    container_name: qdrant_ui
+    ports:
+      - "6335:6333"
+    depends_on:
+      - qdrant
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    command: ./qdrant --config-path /qdrant/config/production.yaml
+    restart: unless-stopped
+
   # PostgreSQL 17 with pgvector
   postgres:
     image: pgvector/pgvector:pg17

@@ -46,7 +46,7 @@ class DatabaseComparison:
             
             start_time = time.time()
             results = self.qdrant_client.search(
-                collection_name="test_vectors",
+                collection_name="test_vectors_small",
                 query_vector=query_vector,
                 limit=10
             )
@@ -89,7 +89,7 @@ class DatabaseComparison:
             
             start_time = time.time()
             results = self.qdrant_client.search_batch(
-                collection_name="test_vectors",
+                collection_name="test_vectors_small",
                 requests=[{"vector": v, "limit": 10} for v in query_vectors]
             )
             end_time = time.time()
@@ -128,7 +128,7 @@ class DatabaseComparison:
             query_vector = self.generate_random_vector()
             start_time = time.time()
             self.qdrant_client.search(
-                collection_name="test_vectors",
+                collection_name="test_vectors_small",
                 query_vector=query_vector,
                 limit=10
             )
@@ -170,7 +170,7 @@ class DatabaseComparison:
         
         # Qdrant stats
         try:
-            collection_info = self.qdrant_client.get_collection("test_vectors")
+            collection_info = self.qdrant_client.get_collection("test_vectors_small")
             stats['qdrant'] = {
                 'points_count': collection_info.points_count,
                 'vector_size': collection_info.config.params.vectors.size,

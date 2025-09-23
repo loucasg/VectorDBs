@@ -60,6 +60,45 @@
             background: #e8f4f8;
             border-color: #3498db;
         }
+        .collection-actions {
+            margin-top: 10px;
+            display: flex;
+            gap: 5px;
+        }
+        .btn {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        .create-collection {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background: #f9f9f9;
+        }
+        .create-collection input {
+            margin-right: 10px;
+            padding: 5px 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
         .collection-name {
             font-weight: bold;
             color: #2c3e50;
@@ -169,6 +208,15 @@
             <!-- Collections Section -->
             <div class="section">
                 <h3>📚 Collections</h3>
+                
+                <!-- Create Collection Form -->
+                <div class="create-collection">
+                    <h4>Create New Collection</h4>
+                    <input type="text" id="new-collection-name" placeholder="Collection name" value="my_collection">
+                    <input type="number" id="new-collection-vector-size" placeholder="Vector size" value="768" min="1" max="4096">
+                    <button class="btn btn-primary" onclick="createCollection()">Create Collection</button>
+                </div>
+                
                 <div id="collections-loading" class="loading">Loading collections...</div>
                 <div id="collections-error" class="error" style="display: none;"></div>
                 <div id="collections-list" class="collection-list"></div>
@@ -239,9 +287,12 @@
             }
             
             container.innerHTML = collections.map(collection => `
-                <div class="collection-card" onclick="selectCollection('${collection.name}')">
-                    <div class="collection-name">${collection.name}</div>
-                    <div class="collection-info">Click to explore</div>
+                <div class="collection-card">
+                    <div class="collection-name" onclick="selectCollection('${collection.name}')">${collection.name}</div>
+                    <div class="collection-info" onclick="selectCollection('${collection.name}')">Click to explore</div>
+                    <div class="collection-actions">
+                        <button class="btn btn-danger" onclick="deleteCollection('${collection.name}')">Delete</button>
+                    </div>
                 </div>
             `).join('');
         }
@@ -398,6 +449,73 @@
         function showSuccess(containerId, message) {
             const container = document.getElementById(containerId);
             container.innerHTML = `<div class="success">${message}</div>`;
+        }
+
+        async function createCollection() {
+            const name = document.getElementById('new-collection-name').value.trim();
+            const vectorSize = parseInt(document.getElementById('new-collection-vector-size').value);
+            
+            if (!name) {
+                showError('collections-error', 'Please enter a collection name');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/collection/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        vector_size: vectorSize
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showSuccess('collections-error', data.message);
+                    // Reload collections
+                    loadCollections();
+                    // Clear form
+                    document.getElementById('new-collection-name').value = 'my_collection';
+                    document.getElementById('new-collection-vector-size').value = '768';
+                } else {
+                    showError('collections-error', data.message);
+                }
+            } catch (error) {
+                showError('collections-error', 'Failed to create collection: ' + error.message);
+            }
+        }
+
+        async function deleteCollection(collectionName) {
+            if (!confirm(`Are you sure you want to delete collection '${collectionName}'? This action cannot be undone.`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/collection/${collectionName}/delete`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showSuccess('collections-error', data.message);
+                    // Reload collections
+                    loadCollections();
+                    // Hide collection details if this was the selected collection
+                    if (currentCollection === collectionName) {
+                        document.getElementById('collection-details').style.display = 'none';
+                        currentCollection = null;
+                    }
+                } else {
+                    showError('collections-error', data.message);
+                }
+            } catch (error) {
+                showError('collections-error', 'Failed to delete collection: ' + error.message);
+            }
         }
     </script>
 </body>

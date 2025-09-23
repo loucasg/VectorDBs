@@ -56,8 +56,7 @@ class PostgreSQLVectorPopulator:
                 table_exists = cur.fetchone()[0]
                 
                 if table_exists:
-                    print("Table 'vector_embeddings' already exists. Clearing it...")
-                    cur.execute("TRUNCATE TABLE vector_embeddings RESTART IDENTITY CASCADE;")
+                    print("Table 'vector_embeddings' already exists. Adding to existing data...")
                 else:
                     print("Table 'vector_embeddings' does not exist. Creating it...")
                     # The table should already be created by init-postgres.sql
@@ -108,6 +107,20 @@ class PostgreSQLVectorPopulator:
             }
         }
 
+    def get_next_available_id(self) -> int:
+        """Get the next available ID to avoid conflicts when adding to existing data"""
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COALESCE(MAX(vector_id), 0) + 1 FROM vector_embeddings;")
+                next_id = cur.fetchone()[0]
+                return next_id
+        except Exception as e:
+            print(f"Error getting next available ID: {e}")
+            return 1  # Fallback to starting from 1
+        finally:
+            conn.close()
+
     def insert_batch(self, batch_data: List[Dict[str, Any]]) -> bool:
         """Insert a batch of records"""
         conn = self.get_connection()
@@ -156,6 +169,10 @@ class PostgreSQLVectorPopulator:
         print(f"Batch size: {self.batch_size}")
         print(f"Max workers: {max_workers}")
         
+        # Get the next available ID to avoid conflicts
+        start_id = self.get_next_available_id()
+        print(f"Starting from ID: {start_id}")
+        
         start_time = time.time()
         total_batches = (total_records + self.batch_size - 1) // self.batch_size
         
@@ -173,11 +190,11 @@ class PostgreSQLVectorPopulator:
             futures = []
             
             for batch_idx in range(total_batches):
-                start_id = batch_idx * self.batch_size
-                current_batch_size = min(self.batch_size, total_records - start_id)
+                batch_start_id = start_id + (batch_idx * self.batch_size)
+                current_batch_size = min(self.batch_size, total_records - (batch_idx * self.batch_size))
                 
                 # Create batch data
-                batch_data = [{"id": start_id + i} for i in range(current_batch_size)]
+                batch_data = [{"id": batch_start_id + i} for i in range(current_batch_size)]
                 
                 # Submit batch for insertion
                 future = executor.submit(self.insert_batch, batch_data)

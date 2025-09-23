@@ -31,8 +31,8 @@ class VectorDatabasePopulator:
             # Check if collection exists
             collections = self.client.get_collections()
             if any(col.name == self.collection_name for col in collections.collections):
-                print(f"Collection '{self.collection_name}' already exists. Dropping it...")
-                self.client.delete_collection(self.collection_name)
+                print(f"Collection '{self.collection_name}' already exists. Adding to existing collection...")
+                return
             
             # Create new collection
             self.client.create_collection(
@@ -72,6 +72,22 @@ class VectorDatabasePopulator:
             }
         }
 
+    def get_next_available_id(self) -> int:
+        """Get the next available ID to avoid conflicts when adding to existing data"""
+        try:
+            # Get collection info to find the highest existing ID
+            collection_info = self.client.get_collection(self.collection_name)
+            if collection_info.points_count == 0:
+                return 0
+            
+            # Scroll through points to find the highest ID
+            # This is not the most efficient way, but Qdrant doesn't have a direct way to get max ID
+            # For large collections, we'll use a reasonable starting point
+            return collection_info.points_count
+        except Exception as e:
+            print(f"Error getting next available ID: {e}")
+            return 0  # Fallback to starting from 0
+
     def create_batch_points(self, start_id: int, batch_size: int) -> List[PointStruct]:
         """Create a batch of points for insertion"""
         points = []
@@ -108,6 +124,10 @@ class VectorDatabasePopulator:
         print(f"Batch size: {self.batch_size}")
         print(f"Max workers: {max_workers}")
         
+        # Get the next available ID to avoid conflicts
+        start_id = self.get_next_available_id()
+        print(f"Starting from ID: {start_id}")
+        
         start_time = time.time()
         total_batches = (total_records + self.batch_size - 1) // self.batch_size
         
@@ -125,11 +145,11 @@ class VectorDatabasePopulator:
             futures = []
             
             for batch_idx in range(total_batches):
-                start_id = batch_idx * self.batch_size
-                current_batch_size = min(self.batch_size, total_records - start_id)
+                batch_start_id = start_id + (batch_idx * self.batch_size)
+                current_batch_size = min(self.batch_size, total_records - (batch_idx * self.batch_size))
                 
                 # Create batch points
-                points = self.create_batch_points(start_id, current_batch_size)
+                points = self.create_batch_points(batch_start_id, current_batch_size)
                 
                 # Submit batch for insertion
                 future = executor.submit(self.insert_batch, points)

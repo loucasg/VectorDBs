@@ -5,10 +5,11 @@ A basic web interface to explore your Qdrant vector database.
 """
 
 from flask import Flask, render_template, request, jsonify
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams
 import requests
 import json
 import numpy as np
-from qdrant_client import QdrantClient
 import argparse
 
 app = Flask(__name__)
@@ -31,6 +32,37 @@ def get_collections():
         return jsonify({
             "status": "success",
             "collections": [{"name": col.name} for col in collections.collections]
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/api/collection/create', methods=['POST'])
+def create_collection():
+    try:
+        data = request.json
+        collection_name = data.get('name')
+        vector_size = data.get('vector_size', 768)
+        
+        if not collection_name:
+            return jsonify({"status": "error", "message": "Collection name is required"})
+        
+        # Check if collection already exists
+        collections = client.get_collections()
+        if any(col.name == collection_name for col in collections.collections):
+            return jsonify({"status": "error", "message": f"Collection '{collection_name}' already exists"})
+        
+        # Create collection
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(
+                size=vector_size,
+                distance=Distance.COSINE
+            )
+        )
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Collection '{collection_name}' created successfully"
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
@@ -127,6 +159,17 @@ def get_random_vector(collection_name):
         return jsonify({
             "status": "success",
             "vector": vector.tolist()
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/api/collection/<collection_name>/delete', methods=['DELETE'])
+def delete_collection(collection_name):
+    try:
+        client.delete_collection(collection_name)
+        return jsonify({
+            "status": "success",
+            "message": f"Collection '{collection_name}' deleted successfully"
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})

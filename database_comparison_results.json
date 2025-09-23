@@ -1,0 +1,51 @@
+{
+  "test_parameters": {
+    "num_queries": 50,
+    "num_batches": 5,
+    "batch_size": 10,
+    "vector_dimension": 768
+  },
+  "database_stats": {
+    "qdrant": {
+      "points_count": 10000,
+      "vector_size": 768,
+      "distance_metric": "Cosine",
+      "indexed_vectors": 0
+    },
+    "postgres": {
+      "points_count": 10000,
+      "vector_size": 768,
+      "avg_metadata_size": "131.4314000000000000",
+      "earliest_record": "2025-09-23 09:35:30.863846",
+      "latest_record": "2025-09-23 09:35:44.612396"
+    }
+  },
+  "single_search": {
+    "qdrant": {
+      "mean": 0.0036526966094970704,
+      "median": 0.0027025938034057617,
+      "p95": 0.008719301223754881,
+      "p99": 0.010303521156311035,
+      "qps": 273.77034199883553
+    },
+    "postgres": {
+      "mean": 0.03336891174316406,
+      "median": 0.03230392932891846,
+      "p95": 0.03950476646423338,
+      "p99": 0.05203658342361448,
+      "qps": 29.968013571939743
+    }
+  },
+  "batch_search": {
+    "qdrant": {
+      "mean": 0.008408212661743164,
+      "median": 0.00777125358581543,
+      "throughput": 1189.3134013485849
+    },
+    "postgres": {
+      "mean": 0.3312934398651123,
+      "median": 0.3346879482269287,
+      "throughput": 30.18472084467337
+    }
+  }
+}

@@ -74,7 +74,7 @@ echo ""
 echo "=========================================="
 echo "Step 1: Populating Database"
 echo "=========================================="
-python3 populate_database.py \
+python3 populate_qdrant.py \
     --host $HOST \
     --port $PORT \
     --records $RECORDS \

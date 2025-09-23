@@ -4,9 +4,10 @@ A comprehensive testing suite for vector databases using Qdrant, designed to pop
 
 ## Features
 
-- **Docker-based Qdrant setup** with persistent storage
+- **Docker-based vector databases** - Qdrant and PostgreSQL with pgvector
 - **10 million record population** with realistic chunk data
 - **Comprehensive benchmarking** for read and write operations
+- **Database comparison** - Side-by-side performance analysis
 - **System monitoring** during tests
 - **Concurrent operation testing**
 - **Performance metrics** with detailed statistics
@@ -19,7 +20,14 @@ A comprehensive testing suite for vector databases using Qdrant, designed to pop
 - Python 3.8+
 - 8GB+ RAM recommended for 10M records
 
-### 2. Setup
+### 2. Web Interfaces
+
+The setup includes two web interfaces:
+
+- **Official Qdrant Dashboard:** http://localhost:6335 - Full Qdrant management interface
+- **Custom Web UI:** http://localhost:5000 - Enhanced interface with collection management
+
+### 3. Setup
 
 ```bash
 # Clone or download the project files
@@ -28,51 +36,134 @@ cd /path/to/vector-db-test
 # Install Python dependencies
 pip install -r requirements.txt
 
-# Start Qdrant database
+# Start vector databases (Qdrant + PostgreSQL with pgvector)
 docker-compose up -d
 
-# Wait for Qdrant to be ready (about 30 seconds)
-docker-compose logs -f qdrant
+# Wait for databases to be ready (about 30 seconds)
+docker-compose logs -f
 ```
 
-### 3. Populate Database
+### 4. Reset Databases (Optional)
 
 ```bash
-# Populate with 10 million records (this will take 30-60 minutes)
-python populate_database.py --records 10000000
+# Reset both databases to clean state
+python reset_databases.py
 
-# Or start with a smaller dataset for testing
-python populate_database.py --records 100000
+# Reset only Qdrant
+python reset_databases.py --qdrant-only
+
+# Reset only PostgreSQL
+python reset_databases.py --postgres-only
+
+# Reset specific Qdrant collections
+python reset_databases.py --collections test_vectors test_vectors_small
 ```
 
-### 4. Run Benchmarks
+### 5. Populate Databases
 
 ```bash
-# Run read performance benchmark
+# Populate Qdrant with 10 million records (this will take 30-60 minutes)
+python populate_qdrant.py --records 10000000
+
+# Populate PostgreSQL with test data
+python populate_postgres.py --records 1000000
+
+# Or start with smaller datasets for testing
+python populate_qdrant.py --records 100000
+python populate_postgres.py --records 10000
+
+# Add more data to existing collections (won't drop existing data)
+python populate_qdrant.py --records 50000 --collection test_vectors
+python populate_postgres.py --records 5000
+```
+
+### 6. Run Benchmarks
+
+```bash
+# Run read performance benchmark (Qdrant)
 python benchmark_reads.py
 
-# Run write performance benchmark
+# Run write performance benchmark (Qdrant)
 python benchmark_writes.py
+
+# Compare both databases
+python compare_databases.py --queries 100
 
 # Run comprehensive benchmark (includes load testing)
 python benchmark_comprehensive.py
 ```
 
+## Web Interfaces
+
+### Official Qdrant Dashboard
+- **URL:** http://localhost:6335
+- **Features:** Full Qdrant management interface
+- **Use for:** Advanced collection management, configuration, monitoring
+
+### Custom Web UI
+- **URL:** http://localhost:5000
+- **Features:** 
+  - Collection management (create, delete, explore)
+  - Vector similarity search
+  - Point browsing and exploration
+  - Real-time collection statistics
+- **Use for:** Interactive exploration and testing
+
 ## Scripts Overview
 
 ### Core Scripts
 
-- **`populate_database.py`** - Populates the database with test data
+- **`populate_qdrant.py`** - Populates Qdrant with test data (adds to existing collections)
+- **`populate_postgres.py`** - Populates PostgreSQL with test data (adds to existing data)
+- **`reset_databases.py`** - Resets both databases to clean state
 - **`benchmark_reads.py`** - Tests read performance (search, retrieve, scroll)
 - **`benchmark_writes.py`** - Tests write performance (insert, update, delete)
+- **`compare_databases.py`** - Compares Qdrant vs PostgreSQL performance
 - **`benchmark_comprehensive.py`** - Runs all benchmarks with system monitoring
 
 ### Configuration Files
 
-- **`docker-compose.yml`** - Qdrant database setup
+- **`docker-compose.yml`** - Qdrant and PostgreSQL database setup
+- **`init-postgres.sql`** - PostgreSQL initialization with pgvector
 - **`requirements.txt`** - Python dependencies
 
 ## Detailed Usage
+
+### Database Reset
+
+The reset script allows you to clean up and reinitialize both databases:
+
+```bash
+# Complete reset of both databases
+python reset_databases.py
+
+# Reset only Qdrant (keeps PostgreSQL data)
+python reset_databases.py --qdrant-only
+
+# Reset only PostgreSQL (keeps Qdrant data)
+python reset_databases.py --postgres-only
+
+# Reset specific Qdrant collections only
+python reset_databases.py --collections test_vectors
+
+# Reset without creating sample collections
+python reset_databases.py --no-samples
+
+# Custom database connections
+python reset_databases.py \
+  --qdrant-host localhost \
+  --qdrant-port 6333 \
+  --postgres-host localhost \
+  --postgres-port 5432 \
+  --postgres-db vectordb \
+  --postgres-user postgres \
+  --postgres-password postgres
+```
+
+**What the reset script does:**
+- **Qdrant**: Drops all collections and recreates empty ones
+- **PostgreSQL**: Drops and recreates the `vector_embeddings` table with all indexes and functions
+- **Verification**: Confirms both databases are empty and ready for new data
 
 ### Database Population
 
@@ -83,7 +174,7 @@ The population script creates realistic chunk data with:
 
 ```bash
 # Full options
-python populate_database.py \
+python populate_qdrant.py \
   --host localhost \
   --port 6333 \
   --collection test_vectors \
@@ -253,7 +344,7 @@ Key parameters you can adjust:
 ### Custom Vector Dimensions
 
 ```bash
-python populate_database.py --vector-dim 1536 --records 1000000
+python populate_qdrant.py --vector-dim 1536 --records 1000000
 ```
 
 ### Custom Collections
