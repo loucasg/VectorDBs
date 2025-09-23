@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS vector_embeddings (
     id SERIAL PRIMARY KEY,
     vector_id INTEGER UNIQUE NOT NULL,
-    embedding VECTOR(768),  -- 768-dimensional vectors
+    embedding VECTOR(1024),  -- 1024-dimensional vectors
     text_content TEXT,
     metadata JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -43,7 +43,7 @@ CREATE TRIGGER update_vector_embeddings_updated_at
 
 -- Create a function for similarity search
 CREATE OR REPLACE FUNCTION search_similar_vectors(
-    query_embedding VECTOR(768),
+    query_embedding VECTOR(1024),
     match_limit INTEGER DEFAULT 10,
     similarity_threshold FLOAT DEFAULT 0.0
 )
@@ -69,7 +69,7 @@ $$ LANGUAGE plpgsql;
 
 -- Create a function for batch similarity search
 CREATE OR REPLACE FUNCTION search_similar_vectors_batch(
-    query_embeddings VECTOR(768)[],
+    query_embeddings VECTOR(1024)[],
     match_limit INTEGER DEFAULT 10,
     similarity_threshold FLOAT DEFAULT 0.0
 )
@@ -81,7 +81,7 @@ RETURNS TABLE (
     similarity FLOAT
 ) AS $$
 DECLARE
-    query_embedding VECTOR(768);
+    query_embedding VECTOR(1024);
     query_idx INTEGER;
 BEGIN
     FOR query_idx IN 1..array_length(query_embeddings, 1) LOOP
@@ -114,7 +114,7 @@ BEGIN
     RETURN QUERY
     SELECT 
         COUNT(*)::BIGINT as total_points,
-        768 as vector_dimensions,
+        1024 as vector_dimensions,
         AVG(LENGTH(metadata::TEXT)::FLOAT) as avg_metadata_size,
         CONCAT(
             MIN(created_at)::TEXT, 
@@ -127,9 +127,9 @@ $$ LANGUAGE plpgsql;
 
 -- Insert some sample data for testing
 INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata) VALUES
-(1, ARRAY[0.1, 0.2, 0.3, 0.4, 0.5]::VECTOR(768), 'Sample document 1', '{"category": "test", "source": "sample"}'),
-(2, ARRAY[0.2, 0.3, 0.4, 0.5, 0.6]::VECTOR(768), 'Sample document 2', '{"category": "test", "source": "sample"}'),
-(3, ARRAY[0.3, 0.4, 0.5, 0.6, 0.7]::VECTOR(768), 'Sample document 3', '{"category": "test", "source": "sample"}')
+(1, ARRAY[0.1, 0.2, 0.3, 0.4, 0.5]::VECTOR(1024), 'Sample document 1', '{"category": "test", "source": "sample"}'),
+(2, ARRAY[0.2, 0.3, 0.4, 0.5, 0.6]::VECTOR(1024), 'Sample document 2', '{"category": "test", "source": "sample"}'),
+(3, ARRAY[0.3, 0.4, 0.5, 0.6, 0.7]::VECTOR(1024), 'Sample document 3', '{"category": "test", "source": "sample"}')
 ON CONFLICT (vector_id) DO NOTHING;
 
 -- Grant permissions

@@ -36,7 +36,7 @@ def quick_test(host="localhost", port=6333, collection_name="quick_test"):
         client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(
-                size=768,
+                size=1024,
                 distance=Distance.COSINE
             )
         )
@@ -46,7 +46,7 @@ def quick_test(host="localhost", port=6333, collection_name="quick_test"):
         print("Generating test data...")
         test_points = []
         for i in range(1000):
-            vector = np.random.normal(0, 1, 768)
+            vector = np.random.normal(0, 1, 1024)
             vector = vector / np.linalg.norm(vector)  # Normalize
             
             point = PointStruct(
@@ -72,7 +72,7 @@ def quick_test(host="localhost", port=6333, collection_name="quick_test"):
         
         # Test search
         print("Testing search...")
-        query_vector = np.random.normal(0, 1, 768)
+        query_vector = np.random.normal(0, 1, 1024)
         query_vector = query_vector / np.linalg.norm(query_vector)
         
         start_time = time.time()
@@ -87,7 +87,7 @@ def quick_test(host="localhost", port=6333, collection_name="quick_test"):
         
         # Test batch search
         print("Testing batch search...")
-        query_vectors = [np.random.normal(0, 1, 768) for _ in range(5)]
+        query_vectors = [np.random.normal(0, 1, 1024) for _ in range(5)]
         query_vectors = [v / np.linalg.norm(v) for v in query_vectors]
         
         start_time = time.time()

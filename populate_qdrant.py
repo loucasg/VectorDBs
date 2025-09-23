@@ -22,7 +22,7 @@ class VectorDatabasePopulator:
     def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "test_vectors"):
         self.client = QdrantClient(host=host, port=port)
         self.collection_name = collection_name
-        self.vector_dim = 768  # Common embedding dimension (e.g., BERT, sentence-transformers)
+        self.vector_dim = 1024  # Common embedding dimension (e.g., BERT, sentence-transformers)
         self.batch_size = 1000  # Batch size for efficient insertion
         
     def create_collection(self):
@@ -230,7 +230,7 @@ def main():
     parser.add_argument("--collection", default="test_vectors", help="Collection name")
     parser.add_argument("--records", type=int, default=10_000_000, help="Number of records to insert")
     parser.add_argument("--workers", type=int, default=4, help="Number of worker threads")
-    parser.add_argument("--vector-dim", type=int, default=768, help="Vector dimension")
+    parser.add_argument("--vector-dim", type=int, default=1024, help="Vector dimension")
     
     args = parser.parse_args()
     

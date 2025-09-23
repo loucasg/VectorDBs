@@ -175,7 +175,7 @@ python reset_databases.py \
 ### Database Population
 
 The population script creates realistic chunk data with:
-- 768-dimensional vectors (normalized)
+- 1024-dimensional vectors (normalized)
 - Metadata including source, page, section, category
 - Configurable batch sizes and worker threads
 
@@ -187,7 +187,7 @@ python populate_qdrant.py \
   --collection test_vectors \
   --records 10000000 \
   --workers 4 \
-  --vector-dim 768
+  --vector-dim 1024
 ```
 
 ### Read Benchmark
@@ -310,7 +310,7 @@ The Docker setup uses default Qdrant configuration. For production use, consider
 
 Key parameters you can adjust:
 
-- `vector_dim`: Vector dimensionality (default: 768)
+- `vector_dim`: Vector dimensionality (default: 1024)
 - `batch_size`: Batch size for operations (default: 1000)
 - `max_workers`: Number of concurrent workers
 - `iterations`: Number of test iterations

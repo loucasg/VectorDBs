@@ -24,7 +24,7 @@ class DatabaseReset:
             user=postgres_user,
             password=postgres_password
         )
-        self.vector_dim = 768
+        self.vector_dim = 1024
         
     def reset_qdrant(self, collections_to_reset=None):
         """Reset Qdrant collections"""
@@ -89,7 +89,7 @@ class DatabaseReset:
                     CREATE TABLE vector_embeddings (
                         id SERIAL PRIMARY KEY,
                         vector_id INTEGER UNIQUE NOT NULL,
-                        embedding VECTOR(768),
+                        embedding VECTOR(1024),
                         text_content TEXT,
                         metadata JSONB,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -132,7 +132,7 @@ class DatabaseReset:
                 # Create search functions
                 cur.execute("""
                     CREATE OR REPLACE FUNCTION search_similar_vectors(
-                        query_embedding VECTOR(768),
+                        query_embedding VECTOR(1024),
                         match_limit INTEGER DEFAULT 10,
                         similarity_threshold FLOAT DEFAULT 0.0
                     )
@@ -159,7 +159,7 @@ class DatabaseReset:
                 
                 cur.execute("""
                     CREATE OR REPLACE FUNCTION search_similar_vectors_batch(
-                        query_embeddings VECTOR(768)[],
+                        query_embeddings VECTOR(1024)[],
                         match_limit INTEGER DEFAULT 10,
                         similarity_threshold FLOAT DEFAULT 0.0
                     )
@@ -171,7 +171,7 @@ class DatabaseReset:
                         similarity FLOAT
                     ) AS $$
                     DECLARE
-                        query_embedding VECTOR(768);
+                        query_embedding VECTOR(1024);
                         query_idx INTEGER;
                     BEGIN
                         FOR query_idx IN 1..array_length(query_embeddings, 1) LOOP
@@ -205,7 +205,7 @@ class DatabaseReset:
                         RETURN QUERY
                         SELECT 
                             COUNT(*)::BIGINT as total_points,
-                            768 as vector_dimensions,
+                            1024 as vector_dimensions,
                             AVG(LENGTH(metadata::TEXT)::FLOAT) as avg_metadata_size,
                             CONCAT(
                                 MIN(created_at)::TEXT, 

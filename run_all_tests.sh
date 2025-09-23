@@ -79,7 +79,7 @@ python3 populate_qdrant.py \
     --port $PORT \
     --records $RECORDS \
     --workers 4 \
-    --vector-dim 768
+    --vector-dim 1024
 
 echo "Database population completed!"
 echo ""

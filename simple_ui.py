@@ -41,7 +41,7 @@ def create_collection():
     try:
         data = request.json
         collection_name = data.get('name')
-        vector_size = data.get('vector_size', 768)
+        vector_size = data.get('vector_size', 1024)
         
         if not collection_name:
             return jsonify({"status": "error", "message": "Collection name is required"})

@@ -54,8 +54,8 @@ class DatabaseComparison:
         except Exception:
             pass
             
-        print("Warning: Could not determine vector dimension, using default 768")
-        return 768
+        print("Warning: Could not determine vector dimension, using default 1024")
+        return 1024
         
     def generate_random_vector(self) -> List[float]:
         """Generate a random normalized vector"""

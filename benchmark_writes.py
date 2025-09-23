@@ -45,8 +45,8 @@ class WriteBenchmark:
             except Exception:
                 pass
             
-            print(f"Warning: Could not get vector dimension from collection, using default 768: {e}")
-            return 768
+            print(f"Warning: Could not get vector dimension from collection, using default 1024: {e}")
+            return 1024
         
     def create_test_collection(self):
         """Create a test collection for write benchmarks"""

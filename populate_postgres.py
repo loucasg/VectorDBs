@@ -28,7 +28,7 @@ class PostgreSQLVectorPopulator:
         self.database = database
         self.user = user
         self.password = password
-        self.vector_dim = 768
+        self.vector_dim = 1024
         self.batch_size = 1000
         
     def get_connection(self):
@@ -72,7 +72,7 @@ class PostgreSQLVectorPopulator:
                         data_type = result[1]
                         udt_name = result[2]
                         if 'vector' in data_type.lower() or udt_name == 'vector':
-                            # Parse VECTOR(768) to get dimension
+                            # Parse VECTOR(1024) to get dimension
                             import re
                             match = re.search(r'VECTOR\((\d+)\)', data_type)
                             if match:
@@ -411,7 +411,7 @@ class PostgreSQLVectorPopulator:
                 total_points = cur.fetchone()['total_points']
                 
                 # Get vector dimension (pgvector stores dimensions in the type definition)
-                vector_dim = self.vector_dim  # We know it's 768 from our setup
+                vector_dim = self.vector_dim  # We know it's 1024 from our setup
                 
                 # Get metadata stats
                 cur.execute("""
@@ -484,7 +484,7 @@ def main():
     parser.add_argument("--password", default="postgres", help="Database password")
     parser.add_argument("--records", type=int, default=10_000_000, help="Number of records to insert")
     parser.add_argument("--workers", type=int, default=4, help="Number of worker threads")
-    parser.add_argument("--vector-dim", type=int, default=768, help="Vector dimension")
+    parser.add_argument("--vector-dim", type=int, default=1024, help="Vector dimension")
     parser.add_argument("--test-search", action="store_true", help="Run search test after population")
     
     args = parser.parse_args()

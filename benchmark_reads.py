@@ -33,8 +33,8 @@ class ReadBenchmark:
             collection_info = self.client.get_collection(self.collection_name)
             return collection_info.config.params.vectors.size
         except Exception as e:
-            print(f"Warning: Could not get vector dimension from collection, using default 768: {e}")
-            return 768
+            print(f"Warning: Could not get vector dimension from collection, using default 1024: {e}")
+            return 1024
         
     def generate_query_vector(self) -> List[float]:
         """Generate a random query vector"""
