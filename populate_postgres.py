@@ -240,10 +240,8 @@ class PostgreSQLVectorPopulator:
                 cur.execute("SELECT COUNT(*) as total_points FROM vector_embeddings;")
                 total_points = cur.fetchone()['total_points']
                 
-                # Get vector dimension (using a different approach for pgvector)
-                cur.execute("SELECT array_length(embedding::float[], 1) as vector_dim FROM vector_embeddings LIMIT 1;")
-                result = cur.fetchone()
-                vector_dim = result['vector_dim'] if result and result['vector_dim'] else self.vector_dim
+                # Get vector dimension (pgvector stores dimensions in the type definition)
+                vector_dim = self.vector_dim  # We know it's 768 from our setup
                 
                 # Get metadata stats
                 cur.execute("""
