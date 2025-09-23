@@ -213,7 +213,7 @@
                 <div class="create-collection">
                     <h4>Create New Collection</h4>
                     <input type="text" id="new-collection-name" placeholder="Collection name" value="my_collection">
-                    <input type="number" id="new-collection-vector-size" placeholder="Vector size" value="768" min="1" max="4096">
+                    <input type="number" id="new-collection-vector-size" placeholder="Vector size" value="1024" min="1" max="4096">
                     <button class="btn btn-primary" onclick="createCollection()">Create Collection</button>
                 </div>
                 
@@ -480,7 +480,7 @@
                     loadCollections();
                     // Clear form
                     document.getElementById('new-collection-name').value = 'my_collection';
-                    document.getElementById('new-collection-vector-size').value = '768';
+                    document.getElementById('new-collection-vector-size').value = '1024';
                 } else {
                     showError('collections-error', data.message);
                 }

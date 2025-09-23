@@ -56,32 +56,185 @@ class PostgreSQLVectorPopulator:
                 table_exists = cur.fetchone()[0]
                 
                 if table_exists:
-                    print("Table 'vector_embeddings' already exists. Adding to existing data...")
+                    print("Table 'vector_embeddings' already exists. Checking vector dimensions...")
+                    
+                    # Check if the table has the correct vector dimension
+                    cur.execute("""
+                        SELECT column_name, data_type, udt_name, character_maximum_length 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'vector_embeddings' 
+                        AND column_name = 'embedding';
+                    """)
+                    result = cur.fetchone()
+                    
+                    if result:
+                        # Extract dimension from VECTOR(n) type
+                        data_type = result[1]
+                        udt_name = result[2]
+                        if 'vector' in data_type.lower() or udt_name == 'vector':
+                            # Parse VECTOR(768) to get dimension
+                            import re
+                            match = re.search(r'VECTOR\((\d+)\)', data_type)
+                            if match:
+                                current_dim = int(match.group(1))
+                                if current_dim != self.vector_dim:
+                                    print(f"Table has {current_dim}D vectors, but script expects {self.vector_dim}D vectors.")
+                                    print("Dropping and recreating table with correct dimensions...")
+                                    
+                                    # Drop and recreate table with correct dimensions
+                                    cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
+                                    self._create_table_with_dimensions(cur, self.vector_dim)
+                                    print(f"Table recreated with {self.vector_dim}D vectors")
+                                else:
+                                    print(f"Table ready for {self.vector_dim}D vectors")
+                            else:
+                                # Generic VECTOR type without dimension - need to check existing data or recreate
+                                print("Table has generic VECTOR type. Checking existing data...")
+                                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
+                                count = cur.fetchone()[0]
+                                
+                                if count > 0:
+                                    # Try to get dimension from existing data
+                                    try:
+                                        # Use a different approach to get vector dimension
+                                        cur.execute("SELECT array_length(embedding::float[], 1) FROM vector_embeddings LIMIT 1;")
+                                        existing_dim = cur.fetchone()[0]
+                                        if existing_dim != self.vector_dim:
+                                            print(f"Existing data has {existing_dim}D vectors, but script expects {self.vector_dim}D vectors.")
+                                            print("Dropping and recreating table with correct dimensions...")
+                                            cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
+                                            self._create_table_with_dimensions(cur, self.vector_dim)
+                                            print(f"Table recreated with {self.vector_dim}D vectors")
+                                        else:
+                                            print(f"Table ready for {self.vector_dim}D vectors")
+                                    except Exception as e:
+                                        print(f"Could not determine vector dimension from existing data: {e}")
+                                        print("Recreating table with correct dimensions...")
+                                        # Rollback the current transaction first
+                                        conn.rollback()
+                                        cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
+                                        self._create_table_with_dimensions(cur, self.vector_dim)
+                                        print(f"Table recreated with {self.vector_dim}D vectors")
+                                else:
+                                    # Empty table with generic VECTOR type - recreate with specific dimension
+                                    print("Empty table with generic VECTOR type. Recreating with specific dimensions...")
+                                    cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
+                                    self._create_table_with_dimensions(cur, self.vector_dim)
+                                    print(f"Table recreated with {self.vector_dim}D vectors")
+                        else:
+                            print("Table does not have a vector column")
+                    else:
+                        print("Could not find embedding column in table")
                 else:
                     print("Table 'vector_embeddings' does not exist. Creating it...")
-                    # The table should already be created by init-postgres.sql
-                    # But let's create it just in case
-                    cur.execute("""
-                        CREATE TABLE IF NOT EXISTS vector_embeddings (
-                            id SERIAL PRIMARY KEY,
-                            vector_id INTEGER UNIQUE NOT NULL,
-                            embedding VECTOR(768),
-                            text_content TEXT,
-                            metadata JSONB,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        );
-                    """)
+                    self._create_table_with_dimensions(cur, self.vector_dim)
+                    print(f"Table created with {self.vector_dim}D vectors")
                 
                 conn.commit()
-                print(f"Table ready for {self.vector_dim}D vectors")
                 
         except Exception as e:
-            print(f"Error setting up table: {e}")
+            print(f"Error creating collection: {e}")
             conn.rollback()
             raise
         finally:
             conn.close()
+
+    def _create_table_with_dimensions(self, cur, vector_dim):
+        """Create table with specified vector dimensions"""
+        # Create table
+        cur.execute(f"""
+            CREATE TABLE vector_embeddings (
+                id SERIAL PRIMARY KEY,
+                vector_id INTEGER UNIQUE NOT NULL,
+                embedding VECTOR({vector_dim}),
+                text_content TEXT,
+                metadata JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # Create indexes
+        cur.execute("CREATE INDEX idx_vector_embeddings_vector_id ON vector_embeddings(vector_id);")
+        cur.execute("CREATE INDEX idx_vector_embeddings_metadata ON vector_embeddings USING GIN(metadata);")
+        cur.execute("CREATE INDEX idx_vector_embeddings_created_at ON vector_embeddings(created_at);")
+        cur.execute(f"""
+            CREATE INDEX idx_vector_embeddings_embedding_hnsw 
+            ON vector_embeddings USING hnsw (embedding vector_cosine_ops)
+            WITH (m = 16, ef_construction = 64);
+        """)
+        
+        # Create trigger function
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                NEW.updated_at = CURRENT_TIMESTAMP;
+                RETURN NEW;
+            END;
+            $$ language 'plpgsql';
+        """)
+        
+        # Create trigger
+        cur.execute("""
+            CREATE TRIGGER update_vector_embeddings_updated_at 
+                BEFORE UPDATE ON vector_embeddings 
+                FOR EACH ROW 
+                EXECUTE FUNCTION update_updated_at_column();
+        """)
+        
+        # Create search function
+        cur.execute(f"""
+            CREATE OR REPLACE FUNCTION search_similar_vectors(
+                query_embedding VECTOR({vector_dim}),
+                match_limit INTEGER DEFAULT 10,
+                similarity_threshold FLOAT DEFAULT 0.0
+            )
+            RETURNS TABLE (
+                vector_id INTEGER,
+                text_content TEXT,
+                metadata JSONB,
+                similarity FLOAT
+            ) AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT 
+                    ve.vector_id,
+                    ve.text_content,
+                    ve.metadata,
+                    1 - (ve.embedding <=> query_embedding) AS similarity
+                FROM vector_embeddings ve
+                WHERE 1 - (ve.embedding <=> query_embedding) > similarity_threshold
+                ORDER BY ve.embedding <=> query_embedding
+                LIMIT match_limit;
+            END;
+            $$ LANGUAGE plpgsql;
+        """)
+        
+        # Create stats function
+        cur.execute(f"""
+            CREATE OR REPLACE FUNCTION get_collection_stats()
+            RETURNS TABLE (
+                total_points BIGINT,
+                vector_dimensions INTEGER,
+                avg_metadata_size FLOAT,
+                created_at_range TEXT
+            ) AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT 
+                    COUNT(*)::BIGINT as total_points,
+                    {vector_dim} as vector_dimensions,
+                    AVG(LENGTH(metadata::TEXT)::FLOAT) as avg_metadata_size,
+                    CONCAT(
+                        MIN(created_at)::TEXT, 
+                        ' to ', 
+                        MAX(created_at)::TEXT
+                    ) as created_at_range
+                FROM vector_embeddings;
+            END;
+            $$ LANGUAGE plpgsql;
+        """)
 
     def generate_random_vector(self) -> List[float]:
         """Generate a random normalized vector"""

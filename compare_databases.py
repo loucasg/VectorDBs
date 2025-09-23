@@ -19,7 +19,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class DatabaseComparison:
     def __init__(self):
-        self.vector_dim = 768
         self.qdrant_client = QdrantClient(host="localhost", port=6333)
         self.postgres_conn = psycopg2.connect(
             host="localhost",
@@ -28,6 +27,35 @@ class DatabaseComparison:
             user="postgres",
             password="postgres"
         )
+        self.vector_dim = self._get_vector_dimension()
+        
+    def _get_vector_dimension(self) -> int:
+        """Get vector dimension from PostgreSQL table or Qdrant collection"""
+        try:
+            # Try to get from PostgreSQL first (more reliable for comparison)
+            with self.postgres_conn.cursor() as cur:
+                cur.execute("""
+                    SELECT array_length(embedding::float[], 1) 
+                    FROM vector_embeddings 
+                    LIMIT 1;
+                """)
+                result = cur.fetchone()
+                if result and result[0]:
+                    return result[0]
+        except Exception:
+            pass
+            
+        try:
+            # Try to get from Qdrant as fallback
+            collections = self.qdrant_client.get_collections()
+            if collections.collections:
+                collection_info = self.qdrant_client.get_collection(collections.collections[0].name)
+                return collection_info.config.params.vectors.size
+        except Exception:
+            pass
+            
+        print("Warning: Could not determine vector dimension, using default 768")
+        return 768
         
     def generate_random_vector(self) -> List[float]:
         """Generate a random normalized vector"""
@@ -368,10 +396,15 @@ class DatabaseComparison:
             }
         }
         
-        with open('database_comparison_results.json', 'w') as f:
+        # Create results directory if it doesn't exist
+        import os
+        os.makedirs("results", exist_ok=True)
+        
+        filename = "results/database_comparison_results.json"
+        with open(filename, 'w') as f:
             json.dump(results, f, indent=2, default=str)
         
-        print(f"\nDetailed results saved to: database_comparison_results.json")
+        print(f"\nDetailed results saved to: {filename}")
 
 
 def main():

@@ -1,0 +1,22 @@
+{
+  "timestamp": "2025-09-24T07:27:05.990198",
+  "qdrant_collection": "test_vectors",
+  "num_queries": 10,
+  "num_inserts": 10,
+  "qdrant_search": {
+    "mean": 0.006636786460876465,
+    "median": 0.005696654319763184,
+    "min": 0.00464177131652832,
+    "max": 0.016108036041259766,
+    "qps": 150.6753314868501
+  },
+  "postgres_search": null,
+  "qdrant_insert": {
+    "mean": 0.0023563146591186524,
+    "median": 0.0022803544998168945,
+    "min": 0.0019137859344482422,
+    "max": 0.0031888484954833984,
+    "ops_per_sec": 424.3915370683288
+  },
+  "postgres_insert": null
+}

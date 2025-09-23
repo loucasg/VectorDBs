@@ -24,9 +24,29 @@ class WriteBenchmark:
     def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "write_test_vectors"):
         self.client = QdrantClient(host=host, port=port)
         self.collection_name = collection_name
-        self.vector_dim = 768
+        self.vector_dim = self._get_collection_vector_dim()
         self.results = {}
         self.next_id = 0
+        
+    def _get_collection_vector_dim(self) -> int:
+        """Get the vector dimension from the collection configuration"""
+        try:
+            collection_info = self.client.get_collection(self.collection_name)
+            return collection_info.config.params.vectors.size
+        except Exception as e:
+            # If collection doesn't exist, try to get dimension from another collection
+            try:
+                collections = self.client.get_collections()
+                if collections.collections:
+                    # Use the first available collection to get vector dimension
+                    first_collection = collections.collections[0].name
+                    collection_info = self.client.get_collection(first_collection)
+                    return collection_info.config.params.vectors.size
+            except Exception:
+                pass
+            
+            print(f"Warning: Could not get vector dimension from collection, using default 768: {e}")
+            return 768
         
     def create_test_collection(self):
         """Create a test collection for write benchmarks"""
@@ -338,6 +358,14 @@ class WriteBenchmark:
             if 'batch_size' in stats:
                 serializable_results[operation]['batch_size'] = stats['batch_size']
                 serializable_results[operation]['throughput'] = float(stats['batch_size'] / stats['mean'])
+        
+        # Create results directory if it doesn't exist
+        import os
+        os.makedirs("results", exist_ok=True)
+        
+        # Ensure filename is in results directory
+        if not filename.startswith("results/"):
+            filename = f"results/{filename}"
         
         with open(filename, 'w') as f:
             json.dump(serializable_results, f, indent=2)

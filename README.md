@@ -1,6 +1,6 @@
 # Vector Database Testing Suite
 
-A comprehensive testing suite for vector databases using Qdrant, designed to populate databases with millions of records and benchmark performance.
+Benchmarking scripts of vector databases.
 
 ## Features
 
@@ -22,10 +22,10 @@ A comprehensive testing suite for vector databases using Qdrant, designed to pop
 
 ### 2. Web Interfaces
 
-The setup includes two web interfaces:
+The setup includes a custom web interface:
 
-- **Official Qdrant Dashboard:** http://localhost:6335 - Full Qdrant management interface
 - **Custom Web UI:** http://localhost:5000 - Enhanced interface with collection management
+- **Qdrant API:** http://localhost:6333 - Direct API access for advanced users
 
 ### 3. Setup
 
@@ -41,6 +41,9 @@ docker-compose up -d
 
 # Wait for databases to be ready (about 30 seconds)
 docker-compose logs -f
+
+# Start the custom web UI (optional)
+python simple_ui.py --ui-port 5000
 ```
 
 ### 4. Reset Databases (Optional)
@@ -75,6 +78,10 @@ python populate_postgres.py --records 10000
 # Add more data to existing collections (won't drop existing data)
 python populate_qdrant.py --records 50000 --collection test_vectors
 python populate_postgres.py --records 5000
+
+# Use different vector dimensions (PostgreSQL will recreate table if needed)
+python populate_postgres.py --vector-dim 1024 --records 100000
+python populate_qdrant.py --vector-dim 512 --records 50000
 ```
 
 ### 6. Run Benchmarks
@@ -95,11 +102,6 @@ python benchmark_comprehensive.py
 
 ## Web Interfaces
 
-### Official Qdrant Dashboard
-- **URL:** http://localhost:6335
-- **Features:** Full Qdrant management interface
-- **Use for:** Advanced collection management, configuration, monitoring
-
 ### Custom Web UI
 - **URL:** http://localhost:5000
 - **Features:** 
@@ -109,12 +111,17 @@ python benchmark_comprehensive.py
   - Real-time collection statistics
 - **Use for:** Interactive exploration and testing
 
+### Qdrant API
+- **URL:** http://localhost:6333
+- **Features:** Direct REST API access
+- **Use for:** Advanced users, programmatic access, debugging
+
 ## Scripts Overview
 
 ### Core Scripts
 
-- **`populate_qdrant.py`** - Populates Qdrant with test data (adds to existing collections)
-- **`populate_postgres.py`** - Populates PostgreSQL with test data (adds to existing data)
+- **`populate_qdrant.py`** - Populates Qdrant with test data (adds to existing collections, supports different vector dimensions)
+- **`populate_postgres.py`** - Populates PostgreSQL with test data (adds to existing data, auto-adjusts table schema for different vector dimensions)
 - **`reset_databases.py`** - Resets both databases to clean state
 - **`benchmark_reads.py`** - Tests read performance (search, retrieve, scroll)
 - **`benchmark_writes.py`** - Tests write performance (insert, update, delete)

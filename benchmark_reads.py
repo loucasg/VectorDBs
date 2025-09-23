@@ -24,8 +24,17 @@ class ReadBenchmark:
     def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "test_vectors"):
         self.client = QdrantClient(host=host, port=port)
         self.collection_name = collection_name
-        self.vector_dim = 768
+        self.vector_dim = self._get_collection_vector_dim()
         self.results = {}
+        
+    def _get_collection_vector_dim(self) -> int:
+        """Get the vector dimension from the collection configuration"""
+        try:
+            collection_info = self.client.get_collection(self.collection_name)
+            return collection_info.config.params.vectors.size
+        except Exception as e:
+            print(f"Warning: Could not get vector dimension from collection, using default 768: {e}")
+            return 768
         
     def generate_query_vector(self) -> List[float]:
         """Generate a random query vector"""
@@ -177,7 +186,8 @@ class ReadBenchmark:
         # 2. Batch Search
         print("\n2. Batch Vector Search (10 vectors, 10 results each)")
         batch_search_times = []
-        for _ in tqdm(range(iterations // 10), desc="Batch searches"):  # Fewer iterations for batch
+        batch_iterations = max(1, iterations // 10)  # Ensure at least 1 iteration
+        for _ in tqdm(range(batch_iterations), desc="Batch searches"):  # Fewer iterations for batch
             batch_search_times.append(self.benchmark_batch_search(batch_size=10, limit=10))
         
         self.results['batch_search'] = {
@@ -226,7 +236,8 @@ class ReadBenchmark:
         # 5. Scroll
         print("\n5. Scroll Collection (1000 points)")
         scroll_times = []
-        for _ in tqdm(range(iterations // 10), desc="Scroll operations"):  # Fewer iterations for scroll
+        scroll_iterations = max(1, iterations // 10)  # Ensure at least 1 iteration
+        for _ in tqdm(range(scroll_iterations), desc="Scroll operations"):  # Fewer iterations for scroll
             scroll_times.append(self.benchmark_scroll(limit=1000))
         
         self.results['scroll'] = {
@@ -291,6 +302,14 @@ class ReadBenchmark:
                 'max': float(stats['max']),
                 'qps': float(1.0 / stats['mean']) if stats['mean'] > 0 else 0
             }
+        
+        # Create results directory if it doesn't exist
+        import os
+        os.makedirs("results", exist_ok=True)
+        
+        # Ensure filename is in results directory
+        if not filename.startswith("results/"):
+            filename = f"results/{filename}"
         
         with open(filename, 'w') as f:
             json.dump(serializable_results, f, indent=2)

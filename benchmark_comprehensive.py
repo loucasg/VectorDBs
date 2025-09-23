@@ -86,7 +86,7 @@ class ComprehensiveBenchmark:
             "timestamp": datetime.now().isoformat()
         }
     
-    def run_write_benchmark(self, iterations: int = 100):
+    def run_write_benchmark(self, iterations: int = 100, use_existing_collections: bool = True):
         """Run write performance benchmark"""
         print("\n" + "="*60)
         print("RUNNING WRITE BENCHMARK")
@@ -98,12 +98,28 @@ class ComprehensiveBenchmark:
             collection_name=self.write_collection
         )
         
+        if use_existing_collections:
+            # Check if write collection exists, if not create it
+            try:
+                collections = write_benchmark.client.get_collections()
+                if not any(col.name == self.write_collection for col in collections.collections):
+                    print(f"Write collection '{self.write_collection}' doesn't exist. Creating it...")
+                    write_benchmark.create_test_collection()
+                else:
+                    print(f"Using existing write collection '{self.write_collection}'")
+            except Exception as e:
+                print(f"Error checking write collection: {e}")
+                write_benchmark.create_test_collection()
+        else:
+            write_benchmark.create_test_collection()
+        
         start_time = time.time()
         write_benchmark.run_benchmark_suite(iterations=iterations)
         end_time = time.time()
         
-        # Clean up write test collection
-        write_benchmark.cleanup()
+        # Clean up write test collection only if we created it
+        if not use_existing_collections:
+            write_benchmark.cleanup()
         
         return {
             "results": write_benchmark.results,
@@ -174,7 +190,7 @@ class ComprehensiveBenchmark:
         
         return system_stats
     
-    def run_comprehensive_benchmark(self, iterations: int = 100, load_test_duration: int = 300):
+    def run_comprehensive_benchmark(self, iterations: int = 100, load_test_duration: int = 300, use_existing_collections: bool = True):
         """Run comprehensive benchmark suite"""
         print("Starting Comprehensive Vector Database Benchmark")
         print("="*60)
@@ -184,6 +200,7 @@ class ComprehensiveBenchmark:
         print(f"Write Collection: {self.write_collection}")
         print(f"Iterations: {iterations}")
         print(f"Load Test Duration: {load_test_duration}s")
+        print(f"Use Existing Collections: {use_existing_collections}")
         
         # Get initial system info
         system_info = self.get_system_info()
@@ -212,7 +229,7 @@ class ComprehensiveBenchmark:
             results["read_benchmark"] = self.run_read_benchmark(iterations)
             
             # Run write benchmark
-            results["write_benchmark"] = self.run_write_benchmark(iterations)
+            results["write_benchmark"] = self.run_write_benchmark(iterations, use_existing_collections)
             
             # Run load test
             results["load_test"] = self.run_load_test(load_test_duration)
@@ -269,6 +286,14 @@ class ComprehensiveBenchmark:
         
         serializable_results = convert_numpy_types(results)
         
+        # Create results directory if it doesn't exist
+        import os
+        os.makedirs("results", exist_ok=True)
+        
+        # Ensure filename is in results directory
+        if not filename.startswith("results/"):
+            filename = f"results/{filename}"
+        
         with open(filename, 'w') as f:
             json.dump(serializable_results, f, indent=2)
         
@@ -284,6 +309,8 @@ def main():
     parser.add_argument("--iterations", type=int, default=100, help="Number of iterations per test")
     parser.add_argument("--load-duration", type=int, default=300, help="Load test duration in seconds")
     parser.add_argument("--output", default="comprehensive_benchmark_results.json", help="Output file for results")
+    parser.add_argument("--use-existing-collections", action="store_true", default=True, help="Use existing collections instead of creating new ones")
+    parser.add_argument("--create-new-collections", action="store_true", help="Create new collections for testing (overrides --use-existing-collections)")
     
     args = parser.parse_args()
     
@@ -294,10 +321,14 @@ def main():
         write_collection=args.write_collection
     )
     
+    # Determine whether to use existing collections
+    use_existing = args.use_existing_collections and not args.create_new_collections
+    
     try:
         results = benchmark.run_comprehensive_benchmark(
             iterations=args.iterations,
-            load_test_duration=args.load_duration
+            load_test_duration=args.load_duration,
+            use_existing_collections=use_existing
         )
         benchmark.save_results(results, args.output)
         
