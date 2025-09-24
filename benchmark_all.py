@@ -2848,35 +2848,35 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             
             # 1. Run Weaviate benchmark
             if run_weaviate:
-                print("" + "="*60)
+                print("="*60)
                 print("RUNNING WEAVIATE STANDARDIZED BENCHMARK (1/5)")
                 print("="*60)
                 results["weaviate_benchmark"] = self.run_standardized_benchmark("weaviate", "TestVectors", iterations)
 
             # 2. Run Qdrant benchmark (unified read and write)
             if run_read or run_write:
-                print("" + "="*60)
+                print("="*60)
                 print("RUNNING QDRANT STANDARDIZED BENCHMARK (2/5)")
                 print("="*60)
                 results["qdrant_benchmark"] = self.run_standardized_benchmark("qdrant", read_collection, iterations)
 
             # 3. Run Milvus benchmark
             if run_milvus:
-                print("" + "="*60)
+                print("="*60)
                 print("RUNNING MILVUS STANDARDIZED BENCHMARK (3/5)")
                 print("="*60)
                 results["milvus_benchmark"] = self.run_standardized_benchmark("milvus", read_collection, iterations)
 
             # 4. Run TimescaleDB benchmark
             if run_postgres_ts:
-                print("" + "="*60)
+                print("="*60)
                 print("RUNNING TIMESCALEDB STANDARDIZED BENCHMARK (4/5)")
                 print("="*60)
                 results["postgres_ts_benchmark"] = self.run_standardized_benchmark("timescaledb", read_collection, iterations)
 
             # 5. Run PostgreSQL benchmark
             if run_postgres:
-                print("" + "="*60)
+                print("="*60)
                 print("RUNNING POSTGRESQL STANDARDIZED BENCHMARK (5/5)")
                 print("="*60)
                 results["postgres_benchmark"] = self.run_standardized_benchmark("postgresql", read_collection, iterations)
@@ -2884,7 +2884,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             # Run database comparison (after all individual benchmarks)
             if run_comparison:
                 try:
-                    print("" + "="*60)
+                    print("="*60)
                     print("RUNNING DATABASE COMPARISON")
                     print("="*60)
                     results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
@@ -2894,7 +2894,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             
             # Run load test (final test)
             if run_load_test:
-                print("" + "="*60)
+                print("="*60)
                 print("RUNNING LOAD TEST")
                 print("="*60)
                 results["load_test"] = self.run_load_test(read_collection, write_collection, load_duration)
@@ -2910,7 +2910,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
     
     def print_summary(self, results):
         """Print benchmark summary"""
-        print("" + "="*80)
+        print("="*80)
         print("BENCHMARK SUMMARY")
         print("="*80)
         
@@ -2977,7 +2977,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
     
     def print_performance_comparison_summary(self, results):
         """Print comprehensive performance comparison across all databases"""
-        print("" + "="*80)
+        print("="*80)
         print("COMPREHENSIVE DATABASE PERFORMANCE COMPARISON")
         print("="*80)
         
@@ -3263,7 +3263,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
     
     def print_summary_table(self, results):
         """Print a comprehensive summary table of all database performance metrics"""
-        print("" + "="*120)
+        print("="*120)
         print("COMPREHENSIVE PERFORMANCE SUMMARY TABLE")
         print("="*120)
         
@@ -3407,7 +3407,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print(" ".join(formatted_row))
         
         # Add performance rankings
-        print("" + "="*80)
+        print("="*80)
         print("PERFORMANCE RANKINGS")
         print("="*80)
         
@@ -3438,7 +3438,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 print(f"  {medal} {i}. {db}: {ops:.1f} ops/sec")
         
         # Overall performance summary
-        print("" + "="*80)
+        print("="*80)
         print("OVERALL PERFORMANCE SUMMARY")
         print("="*80)
         
