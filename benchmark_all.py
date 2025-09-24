@@ -1111,7 +1111,114 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         }
 
     # ==================== MAIN BENCHMARK RUNNER ====================
-    
+
+    def run_database_comparison(self, results: Dict[str, Any]):
+        """Generate comparison analysis from existing benchmark results"""
+        print(f"{'='*60}")
+        print(f"DATABASE COMPARISON")
+        print(f"{'='*60}")
+
+        # Use existing benchmark results instead of running new benchmarks
+        qdrant_benchmark = results.get("qdrant_benchmark")
+        postgres_results = results.get("postgres_benchmark")
+
+        if not any([qdrant_benchmark, postgres_results]):
+            print("Error: Could not complete database comparison - no valid benchmark results available")
+            return None
+
+        # Calculate performance ratios
+        comparison_results = {
+            'qdrant_benchmark': qdrant_benchmark,
+            'postgres': postgres_results,
+            'ratios': {}
+        }
+
+        # Search comparison
+        if qdrant_benchmark and 'single_search' in qdrant_benchmark and postgres_results and 'single_search' in postgres_results:
+            qdrant_qps = qdrant_benchmark['single_search']['qps']
+            postgres_qps = postgres_results['single_search']['qps']
+            if postgres_qps > 0:
+                comparison_results['ratios']['search_performance'] = {
+                    'qdrant_vs_postgres': qdrant_qps / postgres_qps,
+                }
+
+        # Insert comparison
+        if qdrant_benchmark and 'single_insert' in qdrant_benchmark and postgres_results and 'single_insert' in postgres_results:
+            qdrant_throughput = qdrant_benchmark['single_insert']['throughput']
+            postgres_throughput = postgres_results['single_insert']['throughput']
+            if postgres_throughput > 0:
+                comparison_results['ratios']['insert_throughput'] = {
+                    'qdrant_vs_postgres': qdrant_throughput / postgres_throughput,
+                }
+
+        return comparison_results
+
+    def run_load_test(self, read_collection: str, write_collection: str, duration: int = 120):
+        """Run system load test with continuous operations"""
+        print(f"{'='*60}")
+        print(f"LOAD TEST ({duration} seconds) - Collection: {read_collection}")
+        print(f"{'='*60}")
+
+        import threading
+
+        def continuous_reads():
+            try:
+                query_vector = self.generate_standard_vector()
+                self.qdrant_client.query_points(
+                    collection_name=read_collection,
+                    query=query_vector,
+                    limit=10
+                )
+            except Exception as e:
+                print(f"Error in continuous reads: {e}")
+
+        def continuous_writes():
+            try:
+                points = [self.generate_test_point(self.next_id + i) for i in range(100)]
+                self.qdrant_client.upsert(
+                    collection_name=write_collection,
+                    points=points
+                )
+                self.next_id += 100
+            except Exception as e:
+                print(f"Error in continuous writes: {e}")
+
+        # Monitor system performance
+        print(f"Monitoring system for {duration} seconds...")
+        cpu_usage = []
+        memory_usage = []
+
+        start_time = time.time()
+        while time.time() - start_time < duration:
+            # Get system metrics
+            cpu_percent = psutil.cpu_percent()
+            memory_percent = psutil.virtual_memory().percent
+
+            cpu_usage.append(cpu_percent)
+            memory_usage.append(memory_percent)
+
+            # Run some operations
+            if len(cpu_usage) % 2 == 0:  # Read operations
+                threading.Thread(target=continuous_reads).start()
+            else:  # Write operations
+                threading.Thread(target=continuous_writes).start()
+
+            time.sleep(1)  # Sample every second
+
+        return {
+            'duration': duration,
+            'cpu_usage': {
+                'mean': statistics.mean(cpu_usage),
+                'max': max(cpu_usage),
+                'min': min(cpu_usage)
+            },
+            'memory_usage': {
+                'mean': statistics.mean(memory_usage),
+                'max': max(memory_usage),
+                'min': min(memory_usage)
+            }
+        }
+
     def run_comprehensive_benchmark(self, 
                                   read_collection: str = "test_vectors",
                                   write_collection: str = "test_vectors",
