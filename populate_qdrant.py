@@ -80,10 +80,11 @@ class VectorDatabasePopulator:
             if collection_info.points_count == 0:
                 return 0
             
-            # Scroll through points to find the highest ID
-            # This is not the most efficient way, but Qdrant doesn't have a direct way to get max ID
-            # For large collections, we'll use a reasonable starting point
-            return collection_info.points_count
+            # Use timestamp-based ID generation to avoid conflicts
+            # This ensures unique IDs even across multiple runs
+            import time
+            timestamp_id = int(time.time() * 1000000)  # Microsecond timestamp
+            return timestamp_id
         except Exception as e:
             print(f"Error getting next available ID: {e}")
             return 0  # Fallback to starting from 0
