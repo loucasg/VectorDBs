@@ -380,27 +380,29 @@ class RecordCounter:
         print("="*80)
         
         # Qdrant results
-        print(f"\n🔍 QDRANT DATABASE:")
-        if qdrant_result["success"]:
-            print(f"  Collection: {qdrant_result['collection_name']}")
-            print(f"  Records: {qdrant_result['count']:,}")
-            print(f"  Vector Dimension: {qdrant_result['vector_dim']}")
-            print(f"  Distance Metric: {qdrant_result['distance_metric']}")
-            print(f"  Indexed Vectors: {qdrant_result['indexed_vectors']:,}")
-        else:
-            print(f"  ❌ Error: {qdrant_result['error']}")
+        if qdrant_result:
+            print(f"\n🔍 QDRANT DATABASE:")
+            if qdrant_result["success"]:
+                print(f"  Collection: {qdrant_result['collection_name']}")
+                print(f"  Records: {qdrant_result['count']:,}")
+                print(f"  Vector Dimension: {qdrant_result['vector_dim']}")
+                print(f"  Distance Metric: {qdrant_result['distance_metric']}")
+                print(f"  Indexed Vectors: {qdrant_result['indexed_vectors']:,}")
+            else:
+                print(f"  ❌ Error: {qdrant_result['error']}")
         
         # PostgreSQL results
-        print(f"\n🐘 POSTGRESQL DATABASE:")
-        if postgres_result["success"]:
-            print(f"  Table: vector_embeddings")
-            print(f"  Records: {postgres_result['count']:,}")
-            print(f"  Vector Dimension: {postgres_result['vector_dim']}")
-            print(f"  Table Size: {postgres_result['table_size']}")
-            print(f"  Data Size: {postgres_result['data_size']}")
-            print(f"  Index Size: {postgres_result['index_size']}")
-        else:
-            print(f"  ❌ Error: {postgres_result['error']}")
+        if postgres_result:
+            print(f"\n🐘 POSTGRESQL DATABASE:")
+            if postgres_result["success"]:
+                print(f"  Table: vector_embeddings")
+                print(f"  Records: {postgres_result['count']:,}")
+                print(f"  Vector Dimension: {postgres_result['vector_dim']}")
+                print(f"  Table Size: {postgres_result['table_size']}")
+                print(f"  Data Size: {postgres_result['data_size']}")
+                print(f"  Index Size: {postgres_result['index_size']}")
+            else:
+                print(f"  ❌ Error: {postgres_result['error']}")
         
         # TimescaleDB results
         if postgres_ts_result:
@@ -450,9 +452,9 @@ class RecordCounter:
         
         # Multi-database comparison
         successful_results = []
-        if qdrant_result["success"]:
+        if qdrant_result and qdrant_result["success"]:
             successful_results.append(("Qdrant", qdrant_result["count"]))
-        if postgres_result["success"]:
+        if postgres_result and postgres_result["success"]:
             successful_results.append(("PostgreSQL", postgres_result["count"]))
         if postgres_ts_result and postgres_ts_result["success"]:
             successful_results.append(("TimescaleDB", postgres_ts_result["count"]))
