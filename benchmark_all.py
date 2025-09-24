@@ -19,7 +19,6 @@ from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, Fi
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from tqdm import tqdm
-import requests
 
 # Optional imports for new databases
 try:
@@ -232,7 +231,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
 
     def run_standardized_benchmark(self, db_type: str, collection_name: str, iterations: int = 100):
         """Run standardized benchmark for any database type"""
-        print(f"\{'='*60}")
+        print(f"{'='*60}")
         print(f"{db_type.upper()} STANDARDIZED BENCHMARK - Collection: {collection_name}")
         print(f"{'='*60}")
 
@@ -262,7 +261,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         ]
 
         for operation_key, operation_name, benchmark_func in benchmark_operations:
-            print(f"\{len(results)+1}. {operation_name}")
+            print(f"{len(results)+1}. {operation_name}")
             try:
                 times = benchmark_func(db_ops, iterations)
                 results[operation_key] = self.calculate_standard_metrics(times)
@@ -880,25 +879,6 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             "delete": lambda delete_id: {"mock": True}
         }
 
-        def batch_search_unused(query_vectors):
-            try:
-                connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
-                collection = Collection(collection_name, using=connection_alias)
-                collection.load()
-                results = collection.search(
-                    data=query_vectors,
-                    anns_field="vector",
-                    param={"metric_type": "COSINE", "params": {"nprobe": 10}},
-                    limit=10
-                )
-                return results
-            except Exception as e:
-                raise Exception(f"Milvus batch_search failed: {e}")
-            finally:
-                try:
-                    connections.disconnect(connection_alias)
-                except:
-                    pass
 
         def filtered_search(query_vector, filter_category):
             try:
@@ -1138,7 +1118,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         print("1. Single Search Performance")
         single_search_times = []
         for _ in tqdm(range(iterations), desc="Single searches"):
-            query_vector = self.generate_query_vector()
+            query_vector = self.generate_standard_vector()
             start_time = time.time()
             self.qdrant_client.query_points(
                 collection_name=collection_name,
@@ -1162,7 +1142,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         batch_search_times = []
         batch_iterations = max(1, iterations // 10)
         for _ in tqdm(range(batch_iterations), desc="Batch searches"):
-            query_vectors = [self.generate_query_vector() for _ in range(5)]  # Reduced from 10 to 5
+            query_vectors = [self.generate_standard_vector() for _ in range(5)]  # Reduced from 10 to 5
             start_time = time.time()
             self.qdrant_client.query_batch_points(
                 collection_name=collection_name,
@@ -1185,7 +1165,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         filtered_search_times = []
         categories = ["A", "B", "C", "D"]
         for _ in tqdm(range(iterations), desc="Filtered searches"):
-            query_vector = self.generate_query_vector()
+            query_vector = self.generate_standard_vector()
             random_category = np.random.choice(categories)
             
             start_time = time.time()
@@ -1238,7 +1218,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
         print(f"5. Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
         def single_search():
-            query_vector = self.generate_query_vector()
+            query_vector = self.generate_standard_vector()
             start_time = time.time()
             self.qdrant_client.query_points(
                 collection_name=collection_name,
@@ -1553,7 +1533,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print("1. PostgreSQL Search Performance")
             search_times = []
             for _ in tqdm(range(iterations), desc="PostgreSQL searches"):
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 with conn.cursor() as cur:
                     cur.execute("""
@@ -1581,7 +1561,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             batch_search_times = []
             batch_iterations = max(1, iterations // 10)
             for _ in tqdm(range(batch_iterations), desc="PostgreSQL batch searches"):
-                query_vectors = [self.generate_query_vector() for _ in range(10)]
+                query_vectors = [self.generate_standard_vector() for _ in range(10)]
                 start_time = time.time()
                 with conn.cursor() as cur:
                     for query_vector in query_vectors:
@@ -1604,7 +1584,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print("3. PostgreSQL Filtered Search Performance")
             filtered_search_times = []
             for _ in tqdm(range(iterations), desc="PostgreSQL filtered searches"):
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 with conn.cursor() as cur:
                     cur.execute("""
@@ -1651,7 +1631,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print(f"5. PostgreSQL Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             concurrent_search_times = []
             def postgres_search_worker():
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 with conn.cursor() as cur:
                     cur.execute("""
@@ -1689,7 +1669,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 max_id = cur.fetchone()[0]
             
             for i in tqdm(range(iterations), desc="PostgreSQL inserts"):
-                vector = self.generate_query_vector()
+                vector = self.generate_standard_vector()
                 unique_id = max_id + 100000 + i  # Use a large offset to avoid conflicts
                 
                 start_time = time.time()
@@ -1727,7 +1707,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                     # Insert 100 records in a single transaction
                     values = []
                     for j in range(100):
-                        vector = self.generate_query_vector()
+                        vector = self.generate_standard_vector()
                         unique_id = max_id + 200000 + (i * 100) + j
                         values.append(f"({unique_id}, ARRAY{vector}::vector, 'Batch point {i}-{j}', '{{\"batch\": true}}')")
                     
@@ -1753,7 +1733,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                     cur.execute("SELECT vector_id FROM vector_embeddings ORDER BY RANDOM() LIMIT 1;")
                     record_id = cur.fetchone()[0]
                 
-                new_vector = self.generate_query_vector()
+                new_vector = self.generate_standard_vector()
                 start_time = time.time()
                 with conn.cursor() as cur:
                     cur.execute("""
@@ -1872,7 +1852,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             """Continuously perform read operations"""
             while not stop_event.is_set():
                 try:
-                    query_vector = self.generate_query_vector()
+                    query_vector = self.generate_standard_vector()
                     self.qdrant_client.query_points(
                         collection_name=collection_name,
                         query=query_vector,
@@ -2288,7 +2268,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print("1. Milvus Single Search Performance")
             single_search_times = []
             for _ in tqdm(range(iterations), desc="Milvus single searches"):
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 
                 # Search in Milvus
@@ -2307,7 +2287,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             batch_search_times = []
             batch_iterations = max(1, iterations // 10)
             for _ in tqdm(range(batch_iterations), desc="Milvus batch searches"):
-                query_vectors = [self.generate_query_vector() for _ in range(10)]
+                query_vectors = [self.generate_standard_vector() for _ in range(10)]
                 start_time = time.time()
                 
                 # Batch search in Milvus
@@ -2325,7 +2305,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print("3. Milvus Filtered Search Performance")
             filtered_search_times = []
             for _ in tqdm(range(iterations), desc="Milvus filtered searches"):
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 
                 # Search with filter in Milvus
@@ -2361,7 +2341,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             print(f"5. Milvus Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def milvus_search_worker():
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 
                 results = collection.search(
@@ -2389,7 +2369,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             # Use timestamp-based ID to avoid conflicts
             base_id = int(time.time() * 1000)  # Use milliseconds since epoch
             for i in tqdm(range(iterations), desc="Milvus single inserts"):
-                vector = self.generate_query_vector()
+                vector = self.generate_standard_vector()
                 unique_id = base_id + i  # Use timestamp-based ID
                 
                 start_time = time.time()
@@ -2415,7 +2395,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 start_time = time.time()
                 
                 # Insert 100 records in batch
-                vectors = [self.generate_query_vector() for _ in range(100)]
+                vectors = [self.generate_standard_vector() for _ in range(100)]
                 texts = [f"Batch document {base_id + (i * 100) + j}" for j in range(100)]
                 metadata = [f'{{"source": "batch", "id": {base_id + (i * 100) + j}}}' for j in range(100)]
                 
@@ -2432,7 +2412,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             for i in tqdm(range(iterations), desc="Milvus updates"):
                 # Get a random existing record
                 random_id = np.random.randint(1, 100000)
-                new_vector = self.generate_query_vector()
+                new_vector = self.generate_standard_vector()
                 
                 start_time = time.time()
                 
@@ -2541,7 +2521,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print("1. Weaviate Single Search Performance")
             single_search_times = []
             for _ in tqdm(range(iterations), desc="Weaviate single searches"):
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 
                 # Search in Weaviate using v4 API
@@ -2559,7 +2539,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             batch_search_times = []
             batch_iterations = max(1, iterations // 10)
             for _ in tqdm(range(batch_iterations), desc="Weaviate batch searches"):
-                query_vectors = [self.generate_query_vector() for _ in range(10)]
+                query_vectors = [self.generate_standard_vector() for _ in range(10)]
                 start_time = time.time()
                 
                 # Batch search in Weaviate
@@ -2577,7 +2557,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print("3. Weaviate Filtered Search Performance")
             filtered_search_times = []
             for _ in tqdm(range(iterations), desc="Weaviate filtered searches"):
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 
                 # Search with filter in Weaviate (simplified for now)
@@ -2612,7 +2592,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             print(f"5. Weaviate Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def weaviate_search_worker():
-                query_vector = self.generate_query_vector()
+                query_vector = self.generate_standard_vector()
                 start_time = time.time()
                 
                 result = collection.query.near_vector(
@@ -2644,7 +2624,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             # Use timestamp-based ID to avoid conflicts
             base_id = int(time.time() * 1000)  # Use milliseconds since epoch
             for i in tqdm(range(iterations), desc="Weaviate single inserts"):
-                vector = self.generate_query_vector()
+                vector = self.generate_standard_vector()
                 unique_id = f"doc_{base_id + i}"
                 
                 start_time = time.time()
@@ -2674,7 +2654,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 # Insert 100 records in batch
                 data_objects = []
                 for j in range(100):
-                    vector = self.generate_query_vector()
+                    vector = self.generate_standard_vector()
                     unique_id = f"doc_{base_id + (i * 100) + j}"
                     data_objects.append(wvc.data.DataObject(
                         properties={
@@ -2695,7 +2675,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             for i in tqdm(range(iterations), desc="Weaviate updates"):
                 # Get a random existing record
                 random_id = f"doc_{np.random.randint(1, 100000)}"
-                new_vector = self.generate_query_vector()
+                new_vector = self.generate_standard_vector()
                 
                 start_time = time.time()
                 
