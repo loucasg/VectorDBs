@@ -123,7 +123,7 @@ python3 benchmark_comprehensive.py \
     --read-collection test_vectors \
     --write-collection write_test_vectors \
     --iterations $ITERATIONS \
-    --load-duration 300 \
+    --load-duration 120 \
     --output "$RESULTS_DIR/comprehensive_benchmark_results.json"
 
 echo "Comprehensive benchmark completed!"

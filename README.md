@@ -1,6 +1,6 @@
 # Vector Database Testing Suite
 
-Benchmarking scripts of vector databases.
+Comprehensive benchmarking and testing suite for vector databases including Qdrant and PostgreSQL with pgvector.
 
 ## Features
 
@@ -11,6 +11,9 @@ Benchmarking scripts of vector databases.
 - **System monitoring** during tests
 - **Concurrent operation testing**
 - **Performance metrics** with detailed statistics
+- **Consolidated benchmark suite** - Single script for all test types
+- **Record counting utilities** - Count and compare records across databases
+- **Web interface** - Custom UI for collection management and exploration
 
 ## Quick Start
 
@@ -86,6 +89,17 @@ python populate_qdrant.py --vector-dim 512 --records 50000
 
 ### 6. Run Benchmarks
 
+#### Quick Start (Recommended)
+```bash
+# Run all benchmarks with default settings
+python benchmark_all.py
+
+# Run specific benchmarks only
+python benchmark_all.py --read --write
+python benchmark_all.py --comparison --load-test
+```
+
+#### Individual Scripts (Legacy)
 ```bash
 # Run read performance benchmark (Qdrant)
 python benchmark_reads.py
@@ -99,6 +113,21 @@ python compare_databases.py --queries 100
 # Run comprehensive benchmark (includes load testing)
 python benchmark_comprehensive.py
 ```
+
+### 7. Count Records
+
+```bash
+# Count records in test_vectors collection
+python count_records.py
+
+# Show all Qdrant collections
+python count_records.py --all-collections
+
+# Count specific collection
+python count_records.py --collection my_collection
+```
+
+> **Note**: The `benchmark_all.py` script consolidates all benchmark functionality. See the [Benchmark Usage](#benchmark-usage) section for detailed usage instructions.
 
 ## Web Interfaces
 
@@ -118,21 +147,239 @@ python benchmark_comprehensive.py
 
 ## Scripts Overview
 
-### Core Scripts
+### Main Benchmark Script
 
+- **`benchmark_all.py`** - **Consolidated benchmark suite** - Single script with flags for all test types
+  - `--read` - Read performance tests (search, retrieve, scroll, concurrent)
+  - `--write` - Write performance tests (insert, update, delete, batch operations)
+  - `--postgres` - PostgreSQL performance tests
+  - `--comparison` - Direct Qdrant vs PostgreSQL comparison
+  - `--load-test` - Sustained performance testing with system monitoring
+  - `--all` - Run all benchmarks (default)
+  - See [Benchmark Usage](#benchmark-usage) section for detailed usage
+
+### Core Scripts
 - **`populate_qdrant.py`** - Populates Qdrant with test data (adds to existing collections, supports different vector dimensions)
 - **`populate_postgres.py`** - Populates PostgreSQL with test data (adds to existing data, auto-adjusts table schema for different vector dimensions)
 - **`reset_databases.py`** - Resets both databases to clean state
-- **`benchmark_reads.py`** - Tests read performance (search, retrieve, scroll)
-- **`benchmark_writes.py`** - Tests write performance (insert, update, delete)
-- **`compare_databases.py`** - Compares Qdrant vs PostgreSQL performance
-- **`benchmark_comprehensive.py`** - Runs all benchmarks with system monitoring
+- **`count_records.py`** - Counts and compares records across both databases
+- **`simple_ui.py`** - Custom web interface for collection management and exploration
+- **`benchmark_reads.py`** - Tests read performance (search, retrieve, scroll) - *Legacy*
+- **`benchmark_writes.py`** - Tests write performance (insert, update, delete) - *Legacy*
+- **`compare_databases.py`** - Compares Qdrant vs PostgreSQL performance - *Legacy*
+- **`benchmark_comprehensive.py`** - Runs all benchmarks with system monitoring - *Legacy*
 
 ### Configuration Files
 
 - **`docker-compose.yml`** - Qdrant and PostgreSQL database setup
 - **`init-postgres.sql`** - PostgreSQL initialization with pgvector
 - **`requirements.txt`** - Python dependencies
+
+## Benchmark Usage
+
+The `benchmark_all.py` script consolidates all benchmark functionality into a single, easy-to-use tool with flags for different test types. This replaces the need for multiple separate benchmark scripts.
+
+### Features
+
+- **Read Benchmarks**: Single search, batch search, filtered search, ID retrieval, scrolling, concurrent searches
+- **Write Benchmarks**: Single insert, batch insert (multiple sizes), concurrent inserts, updates, deletes
+- **PostgreSQL Benchmarks**: Search and insert performance testing
+- **Database Comparison**: Direct performance comparison between Qdrant and PostgreSQL
+- **Load Testing**: Sustained performance testing with system monitoring
+- **Flexible Execution**: Run all tests or select specific ones with flags
+
+### Basic Usage
+
+```bash
+# Run all benchmarks (default)
+python benchmark_all.py
+
+# Run all benchmarks with custom parameters
+python benchmark_all.py --iterations 50 --load-duration 60
+
+# Run specific benchmarks only
+python benchmark_all.py --read --write
+python benchmark_all.py --postgres --comparison
+python benchmark_all.py --load-test --load-duration 30
+```
+
+### Command Line Options
+
+#### Database Connection
+- `--qdrant-host`: Qdrant host (default: localhost)
+- `--qdrant-port`: Qdrant port (default: 6333)
+- `--postgres-host`: PostgreSQL host (default: localhost)
+- `--postgres-port`: PostgreSQL port (default: 5432)
+- `--postgres-user`: PostgreSQL user (default: postgres)
+- `--postgres-password`: PostgreSQL password (default: postgres)
+- `--postgres-db`: PostgreSQL database (default: vectordb)
+
+#### Test Configuration
+- `--read-collection`: Read benchmark collection (default: test_vectors)
+- `--write-collection`: Write benchmark collection (default: test_vectors)
+- `--iterations`: Number of iterations per test (default: 100)
+- `--load-duration`: Load test duration in seconds (default: 120)
+
+#### Test Selection Flags
+- `--all`: Run all benchmarks (default if no specific flags)
+- `--read`: Run read benchmark only
+- `--write`: Run write benchmark only
+- `--postgres`: Run PostgreSQL benchmark only
+- `--comparison`: Run database comparison only
+- `--load-test`: Run load test only
+
+#### Output
+- `--output`: Output file for results (default: comprehensive_benchmark_results.json)
+
+### Examples
+
+#### Quick Test
+```bash
+# Run a quick test with minimal iterations
+python benchmark_all.py --iterations 10 --load-duration 30
+```
+
+#### Read Performance Only
+```bash
+# Test only read performance
+python benchmark_all.py --read --iterations 200
+```
+
+#### Write Performance Only
+```bash
+# Test only write performance
+python benchmark_all.py --write --iterations 50
+```
+
+#### Database Comparison
+```bash
+# Compare Qdrant vs PostgreSQL performance
+python benchmark_all.py --comparison --iterations 100
+```
+
+#### Load Testing
+```bash
+# Run a 5-minute load test
+python benchmark_all.py --load-test --load-duration 300
+```
+
+#### Custom Collections
+```bash
+# Test specific collections
+python benchmark_all.py --read-collection my_vectors --write-collection my_test_vectors
+```
+
+#### Multiple Specific Tests
+```bash
+# Run read, write, and comparison tests
+python benchmark_all.py --read --write --comparison --iterations 50
+```
+
+### Output
+
+All results are saved to the `results/` directory as JSON files with comprehensive metrics including:
+
+- **Performance Metrics**: Mean, median, P95, P99, min, max times
+- **Throughput**: QPS (queries per second) and ops/sec (operations per second)
+- **System Monitoring**: CPU and memory usage during load tests
+- **Database Comparison**: Performance ratios between Qdrant and PostgreSQL
+
+### Migration from Individual Scripts
+
+The consolidated script replaces these individual scripts:
+- `benchmark_reads.py` → `--read` flag
+- `benchmark_writes.py` → `--write` flag
+- `benchmark_comprehensive.py` → `--all` flag
+- `compare_databases.py` → `--comparison` flag
+- `simple_comparison.py` → `--comparison` flag
+- `benchmark_comparison.py` → `--comparison` flag
+
+### Benefits
+
+1. **Single Entry Point**: One script for all benchmark types
+2. **Flexible Execution**: Run specific tests or all tests
+3. **Consistent Interface**: Same parameters and output format
+4. **Easier Maintenance**: Single codebase to maintain
+5. **Better Integration**: All tests work together seamlessly
+6. **Comprehensive Results**: All metrics in one output file
+
+### Requirements
+
+- Python 3.7+
+- Qdrant client library
+- PostgreSQL with pgvector extension
+- psycopg2-binary
+- numpy
+- psutil
+- tqdm
+
+### Notes
+
+- The script automatically detects vector dimensions from existing collections
+- Write benchmarks create temporary collections that are cleaned up automatically
+- Load tests run concurrent read and write operations
+- All results are saved to the `results/` directory
+- The script handles errors gracefully and provides detailed output
+
+## Record Counting
+
+The `count_records.py` script provides a comprehensive way to count and compare records across both databases.
+
+### Features
+
+- **Count Qdrant collections** - Get record counts and metadata
+- **Count PostgreSQL tables** - Get record counts and table size information
+- **Compare databases** - Side-by-side comparison of record counts
+- **Show all collections** - List all Qdrant collections with counts
+- **Detailed metadata** - Vector dimensions, table sizes, indexed vectors
+
+### Usage
+
+```bash
+# Count records in test_vectors collection
+python count_records.py
+
+# Show all Qdrant collections
+python count_records.py --all-collections
+
+# Count specific collection
+python count_records.py --collection my_collection
+
+# Use custom database settings
+python count_records.py --qdrant-host localhost --postgres-host localhost
+```
+
+### Command Line Options
+
+- `--collection`: Qdrant collection name to count (default: test_vectors)
+- `--all-collections`: Show counts for all Qdrant collections
+- `--qdrant-host`: Qdrant host (default: localhost)
+- `--qdrant-port`: Qdrant port (default: 6333)
+- `--postgres-host`: PostgreSQL host (default: localhost)
+- `--postgres-port`: PostgreSQL port (default: 5432)
+- `--postgres-user`: PostgreSQL user (default: postgres)
+- `--postgres-password`: PostgreSQL password (default: postgres)
+- `--postgres-db`: PostgreSQL database (default: vectordb)
+
+### Output Information
+
+**For Qdrant:**
+- Collection name
+- Total record count
+- Vector dimension
+- Distance metric
+- Number of indexed vectors
+
+**For PostgreSQL:**
+- Table name
+- Total record count
+- Vector dimension
+- Table size (total, data, index)
+
+**Comparison:**
+- Shows if databases have the same number of records
+- Displays difference in record counts
+- Clear winner indication
 
 ## Detailed Usage
 

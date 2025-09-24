@@ -127,7 +127,7 @@ class ComprehensiveBenchmark:
             "timestamp": datetime.now().isoformat()
         }
     
-    def run_load_test(self, duration: int = 300):
+    def run_load_test(self, duration: int = 120):
         """Run load test for specified duration"""
         print(f"\n" + "="*60)
         print(f"RUNNING LOAD TEST ({duration} seconds)")
@@ -190,7 +190,7 @@ class ComprehensiveBenchmark:
         
         return system_stats
     
-    def run_comprehensive_benchmark(self, iterations: int = 100, load_test_duration: int = 300, use_existing_collections: bool = True):
+    def run_comprehensive_benchmark(self, iterations: int = 100, load_test_duration: int = 120, use_existing_collections: bool = True):
         """Run comprehensive benchmark suite"""
         print("Starting Comprehensive Vector Database Benchmark")
         print("="*60)
@@ -307,7 +307,7 @@ def main():
     parser.add_argument("--read-collection", default="test_vectors", help="Read benchmark collection")
     parser.add_argument("--write-collection", default="write_test_vectors", help="Write benchmark collection")
     parser.add_argument("--iterations", type=int, default=100, help="Number of iterations per test")
-    parser.add_argument("--load-duration", type=int, default=300, help="Load test duration in seconds")
+    parser.add_argument("--load-duration", type=int, default=120, help="Load test duration in seconds")
     parser.add_argument("--output", default="comprehensive_benchmark_results.json", help="Output file for results")
     parser.add_argument("--use-existing-collections", action="store_true", default=True, help="Use existing collections instead of creating new ones")
     parser.add_argument("--create-new-collections", action="store_true", help="Create new collections for testing (overrides --use-existing-collections)")
