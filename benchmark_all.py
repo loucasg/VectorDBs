@@ -153,9 +153,6 @@ class ComprehensiveBenchmarkSuite:
         
         try:
             collection_info = self.qdrant_client.get_collection(collection_name)
-            print(f"Collection: {collection_name}")
-            print(f"Total points: {collection_info.points_count:,}")
-            print(f"Vector dimension: {self.vector_dim}")
         except Exception as e:
             print(f"Error getting collection info: {e}")
             return None
