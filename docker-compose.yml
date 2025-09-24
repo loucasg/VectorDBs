@@ -6,7 +6,7 @@ services:
       - "6333:6333"  # REST API
       - "6334:6334"  # gRPC API
     volumes:
-      - qdrant_storage:/qdrant/storage
+      - ./data/qdrant:/qdrant/storage
     environment:
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__SERVICE__GRPC_PORT=6334
@@ -24,7 +24,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
       - ./init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql
     restart: unless-stopped
     healthcheck:
@@ -45,8 +45,8 @@ services:
       - POSTGRES_PASSWORD=postgres
       - TIMESCALEDB_TELEMETRY=off
     volumes:
-      - postgres_ts_data:/var/lib/postgresql/data
-      - ./init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql
+      - ./data/postgres-ts:/home/postgres/pgdata/data
+      - ./init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -66,7 +66,7 @@ services:
       - ETCD_DATA_DIR=/var/lib/milvus/etcd
       - COMMON_STORAGETYPE=local
     volumes:
-      - milvus_data:/var/lib/milvus
+      - ./data/milvus:/var/lib/milvus
     restart: unless-stopped
     command: ["milvus", "run", "standalone"]
 
@@ -85,18 +85,6 @@ services:
       - ENABLE_MODULES=text2vec-cohere,text2vec-huggingface,text2vec-palm,text2vec-openai,generative-openai,generative-cohere,generative-palm,ref2vec-centroid,reranker-cohere,qna-openai
       - CLUSTER_HOSTNAME=node1
     volumes:
-      - weaviate_data:/var/lib/weaviate
+      - ./data/weaviate:/var/lib/weaviate
     restart: unless-stopped
 
-
-volumes:
-  qdrant_storage:
-    driver: local
-  postgres_data:
-    driver: local
-  postgres_ts_data:
-    driver: local
-  milvus_data:
-    driver: local
-  weaviate_data:
-    driver: local
