@@ -52,6 +52,15 @@ class StandardizedBenchmarkOperations:
             vector = vector / norm
         return vector.tolist()
 
+    def generate_test_point(self, point_id: int) -> Dict[str, Any]:
+        """Generate a standardized test point for insertions"""
+        return {
+            "id": point_id,
+            "vector": self.generate_standard_vector(seed=point_id),
+            "category": f"category_{point_id % 10}",
+            "metadata": {"test_id": point_id}
+        }
+
     def generate_standard_payload(self, point_id: int) -> Dict[str, Any]:
         """Generate standardized payload structure for all databases"""
         return {
@@ -1628,6 +1637,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             }
             
             # Concurrent search performance
+            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             print(f"5. PostgreSQL Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             concurrent_search_times = []
             def postgres_search_worker():
@@ -1643,8 +1653,6 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                     """, (query_vector, query_vector))
                     cur.fetchall()
                 return time.time() - start_time
-            
-            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(postgres_search_worker) for _ in range(concurrent_queries)]
                 for future in tqdm(as_completed(futures), total=concurrent_queries, desc="PostgreSQL concurrent searches"):
@@ -3012,7 +3020,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             search_data.append({
                 "name": "TimescaleDB",
                 "qps": postgres_ts["single_search"]["qps"],
-                "mean_time": postgres_ts["single_search"]["mean_time"],
+                "mean_time": postgres_ts["single_search"]["mean"],
                 "type": "Time-Series + Vector"
             })
         
@@ -3090,7 +3098,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             write_data.append({
                 "name": "TimescaleDB",
                 "ops_per_sec": postgres_ts["single_insert"]["throughput"],
-                "mean_time": postgres_ts["single_insert"]["mean_time"],
+                "mean_time": postgres_ts["single_insert"]["mean"],
                 "type": "Time-Series + Vector"
             })
         
