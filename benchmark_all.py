@@ -777,9 +777,9 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # Search comparison
-        if 'single_search' in qdrant_read and 'search' in postgres_results:
+        if qdrant_read and 'single_search' in qdrant_read and postgres_results and 'single_search' in postgres_results:
             qdrant_qps = qdrant_read['single_search']['qps']
-            postgres_qps = postgres_results['search']['qps']
+            postgres_qps = postgres_results['single_search']['qps']
             if postgres_qps > 0:
                 comparison_results['ratios']['search_qps'] = {
                     'qdrant_vs_postgres': qdrant_qps / postgres_qps,
@@ -788,9 +788,9 @@ class ComprehensiveBenchmarkSuite:
                 }
         
         # Insert comparison
-        if 'single_insert' in qdrant_write and 'insert' in postgres_results:
+        if qdrant_write and 'single_insert' in qdrant_write and postgres_results and 'single_insert' in postgres_results:
             qdrant_throughput = qdrant_write['single_insert']['throughput']
-            postgres_throughput = postgres_results['insert']['throughput']
+            postgres_throughput = postgres_results['single_insert']['throughput']
             if postgres_throughput > 0:
                 comparison_results['ratios']['insert_throughput'] = {
                     'qdrant_vs_postgres': qdrant_throughput / postgres_throughput,
@@ -1718,7 +1718,12 @@ class ComprehensiveBenchmarkSuite:
         print("Comprehensive Vector Database Benchmark Suite")
         print("="*60)
         print(f"Timestamp: {datetime.now().isoformat()}")
+        print(f"Testing Databases: Weaviate, Qdrant, Milvus, TimescaleDB, PostgreSQL")
         print(f"Qdrant Host: {self.qdrant_host}:{self.qdrant_port}")
+        print(f"PostgreSQL Host: {self.postgres_config['host']}:{self.postgres_config['port']}")
+        print(f"TimescaleDB Host: {self.postgres_ts_config['host']}:{self.postgres_ts_config['port']}")
+        print(f"Milvus Host: {self.milvus_host}:{self.milvus_port}")
+        print(f"Weaviate Host: {self.weaviate_host}:{self.weaviate_port}")
         print(f"Read Collection: {read_collection}")
         print(f"Write Collection: {write_collection}")
         print(f"Iterations: {iterations}")
@@ -1739,61 +1744,82 @@ class ComprehensiveBenchmarkSuite:
                 "iterations": iterations,
                 "load_duration": load_duration,
                 "vector_dimension": self.vector_dim,
-                "system_info": system_info
+                "system_info": system_info,
+                "databases_tested": ["Weaviate", "Qdrant", "Milvus", "TimescaleDB", "PostgreSQL"]
             },
+            "weaviate_benchmark": None,
             "read_benchmark": None,
             "write_benchmark": None,
+            "milvus_benchmark": None,
+            "postgres_ts_benchmark": None,
             "postgres_benchmark": None,
             "database_comparison": None,
-            "load_test": None,
-            "milvus_benchmark": None,
-            "weaviate_benchmark": None
+            "load_test": None
         }
         
         try:
-            # Run read benchmark
+            # Database execution order: Weaviate, Qdrant, Milvus, TimescaleDB, PostgreSQL
+            
+            # 1. Run Weaviate benchmark
+            if run_weaviate:
+                print("\n" + "="*60)
+                print("RUNNING WEAVIATE BENCHMARK (1/5)")
+                print("="*60)
+                results["weaviate_benchmark"] = self.run_weaviate_benchmark("TestVectors", iterations)
+            
+            # 2. Run Qdrant benchmarks (read and write)
             if run_read:
+                print("\n" + "="*60)
+                print("RUNNING QDRANT READ BENCHMARK (2/5)")
+                print("="*60)
                 results["read_benchmark"] = self.run_read_benchmark(read_collection, iterations)
             
-            # Run write benchmark
             if run_write:
+                print("\n" + "="*60)
+                print("RUNNING QDRANT WRITE BENCHMARK (2/5)")
+                print("="*60)
                 # Don't cleanup if using the same collection as read benchmark
                 cleanup_write = (write_collection != read_collection)
                 results["write_benchmark"] = self.run_write_benchmark(write_collection, iterations, cleanup=cleanup_write)
             
-            # Run PostgreSQL benchmark
-            if run_postgres:
-                results["postgres_benchmark"] = self.run_postgres_benchmark(iterations)
+            # 3. Run Milvus benchmark
+            if run_milvus:
+                print("\n" + "="*60)
+                print("RUNNING MILVUS BENCHMARK (3/5)")
+                print("="*60)
+                results["milvus_benchmark"] = self.run_milvus_benchmark(read_collection, iterations)
             
-            # Run TimescaleDB benchmark
+            # 4. Run TimescaleDB benchmark
             if run_postgres_ts:
+                print("\n" + "="*60)
+                print("RUNNING TIMESCALEDB BENCHMARK (4/5)")
+                print("="*60)
                 results["postgres_ts_benchmark"] = self.run_postgres_ts_benchmark(iterations)
             
-            # Run database comparison
+            # 5. Run PostgreSQL benchmark
+            if run_postgres:
+                print("\n" + "="*60)
+                print("RUNNING POSTGRESQL BENCHMARK (5/5)")
+                print("="*60)
+                results["postgres_benchmark"] = self.run_postgres_benchmark(iterations)
+            
+            # Run database comparison (after all individual benchmarks)
             if run_comparison:
                 try:
+                    print("\n" + "="*60)
+                    print("RUNNING DATABASE COMPARISON")
+                    print("="*60)
                     results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
                 except Exception as e:
                     print(f"❌ Database comparison failed: {e}")
                     results["database_comparison"] = {"error": str(e)}
             
-            # Run load test
+            # Run load test (final test)
             if run_load_test:
+                print("\n" + "="*60)
+                print("RUNNING LOAD TEST")
+                print("="*60)
                 results["load_test"] = self.run_load_test(read_collection, write_collection, load_duration)
-            
-            # Run Milvus benchmark
-            if run_milvus:
-                print("\n" + "="*60)
-                print("RUNNING MILVUS BENCHMARK")
-                print("="*60)
-                results["milvus_benchmark"] = self.run_milvus_benchmark(read_collection, iterations)
-            
-            # Run Weaviate benchmark
-            if run_weaviate:
-                print("\n" + "="*60)
-                print("RUNNING WEAVIATE BENCHMARK")
-                print("="*60)
-                results["weaviate_benchmark"] = self.run_weaviate_benchmark("TestVectors", iterations)
             
             # Print summary
             self.print_summary(results)
@@ -1918,29 +1944,39 @@ class ComprehensiveBenchmarkSuite:
             })
         
         # PostgreSQL search data
-        if postgres and "search" in postgres:
+        if postgres and "single_search" in postgres:
             search_data.append({
                 "name": "PostgreSQL",
-                "qps": postgres["search"]["qps"],
-                "mean_time": postgres["search"]["mean"],
+                "qps": postgres["single_search"]["qps"],
+                "mean_time": postgres["single_search"]["mean"],
                 "type": "SQL + Vector"
             })
         
+        # TimescaleDB search data
+        if results.get("postgres_ts_benchmark") and "single_search" in results["postgres_ts_benchmark"]:
+            postgres_ts = results["postgres_ts_benchmark"]
+            search_data.append({
+                "name": "TimescaleDB",
+                "qps": postgres_ts["single_search"]["qps"],
+                "mean_time": postgres_ts["single_search"]["mean_time"],
+                "type": "Time-Series + Vector"
+            })
+        
         # Milvus search data
-        if milvus and "error" not in milvus and "read_performance" in milvus:
+        if milvus and "error" not in milvus and "single_search" in milvus:
             search_data.append({
                 "name": "Milvus",
-                "qps": milvus["read_performance"]["qps"],
-                "mean_time": milvus["read_performance"]["mean"],
+                "qps": milvus["single_search"]["qps"],
+                "mean_time": milvus["single_search"]["mean"],
                 "type": "Vector DB"
             })
         
         # Weaviate search data
-        if weaviate and "error" not in weaviate and "read_performance" in weaviate:
+        if weaviate and "error" not in weaviate and "single_search" in weaviate:
             search_data.append({
                 "name": "Weaviate",
-                "qps": weaviate["read_performance"]["qps"],
-                "mean_time": weaviate["read_performance"]["mean"],
+                "qps": weaviate["single_search"]["qps"],
+                "mean_time": weaviate["single_search"]["mean"],
                 "type": "Vector DB"
             })
         
@@ -1986,29 +2022,39 @@ class ComprehensiveBenchmarkSuite:
             })
         
         # PostgreSQL write data
-        if postgres and "insert" in postgres:
+        if postgres and "single_insert" in postgres:
             write_data.append({
                 "name": "PostgreSQL",
-                "ops_per_sec": postgres["insert"]["throughput"],
-                "mean_time": postgres["insert"]["mean"],
+                "ops_per_sec": postgres["single_insert"]["throughput"],
+                "mean_time": postgres["single_insert"]["mean"],
                 "type": "SQL + Vector"
             })
         
+        # TimescaleDB write data
+        if results.get("postgres_ts_benchmark") and "single_insert" in results["postgres_ts_benchmark"]:
+            postgres_ts = results["postgres_ts_benchmark"]
+            write_data.append({
+                "name": "TimescaleDB",
+                "ops_per_sec": postgres_ts["single_insert"]["throughput"],
+                "mean_time": postgres_ts["single_insert"]["mean_time"],
+                "type": "Time-Series + Vector"
+            })
+        
         # Milvus write data
-        if milvus and "error" not in milvus and "write_performance" in milvus:
+        if milvus and "error" not in milvus and "single_insert" in milvus:
             write_data.append({
                 "name": "Milvus",
-                "ops_per_sec": milvus["write_performance"]["qps"],
-                "mean_time": milvus["write_performance"]["mean"],
+                "ops_per_sec": milvus["single_insert"]["throughput"],
+                "mean_time": milvus["single_insert"]["mean"],
                 "type": "Vector DB"
             })
         
         # Weaviate write data
-        if weaviate and "error" not in weaviate and "write_performance" in weaviate:
+        if weaviate and "error" not in weaviate and "single_insert" in weaviate:
             write_data.append({
                 "name": "Weaviate",
-                "ops_per_sec": weaviate["write_performance"]["qps"],
-                "mean_time": weaviate["write_performance"]["mean"],
+                "ops_per_sec": weaviate["single_insert"]["throughput"],
+                "mean_time": weaviate["single_insert"]["mean"],
                 "type": "Vector DB"
             })
         
@@ -2106,6 +2152,17 @@ class ComprehensiveBenchmarkSuite:
                 print("  ❌ Slower vector operations than dedicated vector DBs")
                 print()
             
+            # TimescaleDB recommendations
+            if any(db["name"] == "TimescaleDB" for db in search_data):
+                print("⏰ TIMESCALEDB - Best for time-series + vector data:")
+                print("  ✅ Combines time-series and vector search capabilities")
+                print("  ✅ Excellent for temporal vector data")
+                print("  ✅ Built on PostgreSQL foundation")
+                print("  ✅ Automatic partitioning and optimization")
+                print("  ✅ Time-based analytics with vector similarity")
+                print("  ❌ More complex setup than standard PostgreSQL")
+                print()
+            
             # Milvus recommendations
             if any(db["name"] == "Milvus" for db in search_data):
                 milvus_search = next((db for db in search_data if db["name"] == "Milvus"), None)
@@ -2131,11 +2188,12 @@ class ComprehensiveBenchmarkSuite:
         
         # General recommendations
         print("🎯 GENERAL RECOMMENDATIONS:")
-        print("  • For maximum performance: Qdrant")
+        print("  • For maximum vector performance: Qdrant")
         print("  • For SQL integration: PostgreSQL + pgvector")
-        print("  • For large scale: Milvus")
+        print("  • For time-series + vectors: TimescaleDB")
+        print("  • For large scale deployments: Milvus")
         print("  • For AI/ML workflows: Weaviate")
-        print("  • For production: Consider your specific use case and requirements")
+        print("  • For production: Consider your specific use case, scale, and integration requirements")
     
     def print_summary_table(self, results):
         """Print a comprehensive summary table of all database performance metrics"""
@@ -2420,9 +2478,9 @@ def main():
     args = parser.parse_args()
     
     # Determine which tests to run
-    if args.all or not any([args.read, args.write, args.postgres, args.comparison, args.load_test, args.milvus, args.weaviate, args.all_databases]):
+    if args.all or not any([args.read, args.write, args.postgres, args.postgres_ts, args.comparison, args.load_test, args.milvus, args.weaviate, args.all_databases]):
         # If no specific tests are selected, run all
-        run_read = run_write = run_postgres = run_comparison = run_load_test = True
+        run_read = run_write = run_postgres = run_postgres_ts = run_comparison = run_load_test = True
         run_milvus = run_weaviate = False
     elif args.all_databases:
         # Run all database benchmarks
@@ -2466,7 +2524,7 @@ def main():
             run_read=run_read,
             run_write=run_write,
             run_postgres=run_postgres,
-            run_postgres_ts=args.postgres_ts,
+            run_postgres_ts=run_postgres_ts,
             run_comparison=run_comparison,
             run_load_test=run_load_test,
             run_milvus=run_milvus,
