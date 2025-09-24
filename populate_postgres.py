@@ -56,7 +56,7 @@ class PostgreSQLVectorPopulator:
                 table_exists = cur.fetchone()[0]
                 
                 if table_exists:
-                    print("Table 'vector_embeddings' already exists. Checking vector dimensions...")
+                    print("Table 'vector_embeddings' already exists. Adding to existing table...")
                     
                     # Check if the table has the correct vector dimension
                     cur.execute("""
@@ -78,17 +78,13 @@ class PostgreSQLVectorPopulator:
                             if match:
                                 current_dim = int(match.group(1))
                                 if current_dim != self.vector_dim:
-                                    print(f"Table has {current_dim}D vectors, but script expects {self.vector_dim}D vectors.")
-                                    print("Dropping and recreating table with correct dimensions...")
-                                    
-                                    # Drop and recreate table with correct dimensions
-                                    cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
-                                    self._create_table_with_dimensions(cur, self.vector_dim)
-                                    print(f"Table recreated with {self.vector_dim}D vectors")
+                                    print(f"⚠️  Warning: Table has {current_dim}D vectors, but script is using {self.vector_dim}D vectors.")
+                                    print("⚠️  This may cause errors. Consider using --vector-dim {current_dim} to match existing data.")
+                                    print("⚠️  Or recreate the table manually if you want to change dimensions.")
                                 else:
-                                    print(f"Table ready for {self.vector_dim}D vectors")
+                                    print(f"✅ Table ready for {self.vector_dim}D vectors - will add to existing data")
                             else:
-                                # Generic VECTOR type without dimension - need to check existing data or recreate
+                                # Generic VECTOR type without dimension - check existing data
                                 print("Table has generic VECTOR type. Checking existing data...")
                                 cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
                                 count = cur.fetchone()[0]
@@ -100,21 +96,13 @@ class PostgreSQLVectorPopulator:
                                         cur.execute("SELECT array_length(embedding::float[], 1) FROM vector_embeddings LIMIT 1;")
                                         existing_dim = cur.fetchone()[0]
                                         if existing_dim != self.vector_dim:
-                                            print(f"Existing data has {existing_dim}D vectors, but script expects {self.vector_dim}D vectors.")
-                                            print("Dropping and recreating table with correct dimensions...")
-                                            cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
-                                            self._create_table_with_dimensions(cur, self.vector_dim)
-                                            print(f"Table recreated with {self.vector_dim}D vectors")
+                                            print(f"⚠️  Warning: Existing data has {existing_dim}D vectors, but script is using {self.vector_dim}D vectors.")
+                                            print("⚠️  This may cause errors. Consider using --vector-dim {existing_dim} to match existing data.")
                                         else:
-                                            print(f"Table ready for {self.vector_dim}D vectors")
+                                            print(f"✅ Table ready for {self.vector_dim}D vectors - will add to existing data")
                                     except Exception as e:
-                                        print(f"Could not determine vector dimension from existing data: {e}")
-                                        print("Recreating table with correct dimensions...")
-                                        # Rollback the current transaction first
-                                        conn.rollback()
-                                        cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
-                                        self._create_table_with_dimensions(cur, self.vector_dim)
-                                        print(f"Table recreated with {self.vector_dim}D vectors")
+                                        print(f"⚠️  Warning: Could not determine vector dimension from existing data: {e}")
+                                        print("⚠️  Proceeding with current vector dimension - this may cause errors if dimensions don't match")
                                 else:
                                     # Empty table with generic VECTOR type - recreate with specific dimension
                                     print("Empty table with generic VECTOR type. Recreating with specific dimensions...")
@@ -122,9 +110,15 @@ class PostgreSQLVectorPopulator:
                                     self._create_table_with_dimensions(cur, self.vector_dim)
                                     print(f"Table recreated with {self.vector_dim}D vectors")
                         else:
-                            print("Table does not have a vector column")
+                            print("Table does not have a vector column - recreating...")
+                            cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
+                            self._create_table_with_dimensions(cur, self.vector_dim)
+                            print(f"Table recreated with {self.vector_dim}D vectors")
                     else:
-                        print("Could not find embedding column in table")
+                        print("Could not find embedding column in table - recreating...")
+                        cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
+                        self._create_table_with_dimensions(cur, self.vector_dim)
+                        print(f"Table recreated with {self.vector_dim}D vectors")
                 else:
                     print("Table 'vector_embeddings' does not exist. Creating it...")
                     self._create_table_with_dimensions(cur, self.vector_dim)
@@ -322,9 +316,23 @@ class PostgreSQLVectorPopulator:
         print(f"Batch size: {self.batch_size}")
         print(f"Max workers: {max_workers}")
         
+        # Get current count and next available ID
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
+                current_count = cur.fetchone()[0]
+                print(f"Current records in table: {current_count:,}")
+        except Exception as e:
+            print(f"Error getting current count: {e}")
+            current_count = 0
+        finally:
+            conn.close()
+        
         # Get the next available ID to avoid conflicts
         start_id = self.get_next_available_id()
         print(f"Starting from ID: {start_id}")
+        print(f"Will add {total_records:,} new records (total will be {current_count + total_records:,})")
         
         start_time = time.time()
         total_batches = (total_records + self.batch_size - 1) // self.batch_size
@@ -386,11 +394,25 @@ class PostgreSQLVectorPopulator:
         final_memory = process.memory_info().rss / 1024 / 1024  # MB
         memory_used = final_memory - initial_memory
         
+        # Get final count
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
+                final_count = cur.fetchone()[0]
+        except Exception as e:
+            print(f"Error getting final count: {e}")
+            final_count = current_count + total_records
+        finally:
+            conn.close()
+        
         # Print statistics
         print("\n" + "="*50)
         print("POPULATION COMPLETED")
         print("="*50)
-        print(f"Total records: {total_records:,}")
+        print(f"Records added: {total_records:,}")
+        print(f"Previous count: {current_count:,}")
+        print(f"Final count: {final_count:,}")
         print(f"Successful batches: {successful_batches:,}")
         print(f"Failed batches: {failed_batches:,}")
         print(f"Duration: {duration:.2f} seconds")
