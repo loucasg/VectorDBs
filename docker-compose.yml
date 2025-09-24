@@ -33,6 +33,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # TimescaleDB with pgvector (PostgreSQL 17)
+  postgres-ts:
+    image: timescale/timescaledb-ha:pg17
+    container_name: postgres_ts_vector_db
+    ports:
+      - "5433:5432"  # Different port to avoid conflict
+    environment:
+      - POSTGRES_DB=vectordb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - TIMESCALEDB_TELEMETRY=off
+    volumes:
+      - postgres_ts_data:/var/lib/postgresql/data
+      - ./init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Milvus vector database
   milvus:
     image: milvusdb/milvus:v2.4.0
@@ -72,6 +93,8 @@ volumes:
   qdrant_storage:
     driver: local
   postgres_data:
+    driver: local
+  postgres_ts_data:
     driver: local
   milvus_data:
     driver: local

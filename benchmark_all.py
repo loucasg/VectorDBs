@@ -41,6 +41,9 @@ class ComprehensiveBenchmarkSuite:
                  postgres_host="localhost", postgres_port=5432,
                  postgres_user="postgres", postgres_password="postgres",
                  postgres_db="vectordb",
+                 postgres_ts_host="localhost", postgres_ts_port=5433,
+                 postgres_ts_user="postgres", postgres_ts_password="postgres",
+                 postgres_ts_db="vectordb",
                  milvus_host="localhost", milvus_port=19530,
                  weaviate_host="localhost", weaviate_port=8080,
                  ):
@@ -53,6 +56,13 @@ class ComprehensiveBenchmarkSuite:
             "user": postgres_user,
             "password": postgres_password,
             "database": postgres_db
+        }
+        self.postgres_ts_config = {
+            "host": postgres_ts_host,
+            "port": postgres_ts_port,
+            "user": postgres_ts_user,
+            "password": postgres_ts_password,
+            "database": postgres_ts_db
         }
         self.milvus_host = milvus_host
         self.milvus_port = milvus_port
@@ -857,6 +867,326 @@ class ComprehensiveBenchmarkSuite:
     
     # ==================== NEW DATABASE BENCHMARKS ====================
     
+    def run_postgres_ts_benchmark(self, iterations: int = 100):
+        """Run TimescaleDB benchmark (read and write operations)"""
+        print(f"\n{'='*60}")
+        print("TIMESCALEDB BENCHMARK")
+        print(f"{'='*60}")
+        
+        # Get current record count
+        try:
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
+                postgres_ts_points = cur.fetchone()[0]
+            conn.close()
+        except Exception as e:
+            print(f"❌ Error getting TimescaleDB record count: {e}")
+            return {"error": str(e)}
+        
+        print(f"TimescaleDB Points: {postgres_ts_points:,}")
+        print(f"Vector Dimension: {self.vector_dim}")
+        
+        # Generate test vectors
+        test_vector = np.random.rand(self.vector_dim).astype(np.float32).tolist()
+        test_vectors = [np.random.rand(self.vector_dim).astype(np.float32).tolist() for _ in range(10)]
+        
+        # 1. TimescaleDB Search Performance
+        print(f"\n1. TimescaleDB Search Performance")
+        search_times = []
+        for i in tqdm(range(iterations), desc="TimescaleDB searches"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata, 
+                               1 - (embedding <=> %s::vector) as similarity
+                        FROM vector_embeddings 
+                        ORDER BY embedding <=> %s::vector 
+                        LIMIT 10;
+                    """, (test_vector, test_vector))
+                    results = cur.fetchall()
+                conn.close()
+                search_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB search error: {e}")
+                search_times.append(float('inf'))
+        
+        # 2. TimescaleDB Batch Search Performance
+        print(f"\n2. TimescaleDB Batch Search Performance")
+        batch_search_times = []
+        batch_iterations = max(1, iterations // 10)
+        for i in tqdm(range(batch_iterations), desc="TimescaleDB batch searches"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    # Execute 10 searches in a single query
+                    for _ in range(10):
+                        cur.execute("""
+                            SELECT vector_id, text_content, metadata, 
+                                   1 - (embedding <=> %s::vector) as similarity
+                            FROM vector_embeddings 
+                            ORDER BY embedding <=> %s::vector 
+                            LIMIT 10;
+                        """, (test_vector, test_vector))
+                        results = cur.fetchall()
+                conn.close()
+                batch_search_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB batch search error: {e}")
+                batch_search_times.append(float('inf'))
+        
+        # 3. TimescaleDB Filtered Search Performance
+        print(f"\n3. TimescaleDB Filtered Search Performance")
+        filtered_search_times = []
+        for i in tqdm(range(iterations), desc="TimescaleDB filtered searches"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata, 
+                               1 - (embedding <=> %s::vector) as similarity
+                        FROM vector_embeddings 
+                        WHERE vector_id > %s
+                        ORDER BY embedding <=> %s::vector 
+                        LIMIT 10;
+                    """, (test_vector, 1000, test_vector))
+                    results = cur.fetchall()
+                conn.close()
+                filtered_search_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB filtered search error: {e}")
+                filtered_search_times.append(float('inf'))
+        
+        # 4. TimescaleDB ID Retrieval Performance
+        print(f"\n4. TimescaleDB ID Retrieval Performance")
+        id_retrieval_times = []
+        for i in tqdm(range(iterations), desc="TimescaleDB ID retrievals"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    # Get random IDs first
+                    cur.execute("SELECT vector_id FROM vector_embeddings ORDER BY RANDOM() LIMIT 10;")
+                    random_ids = [row[0] for row in cur.fetchall()]
+                    
+                    # Retrieve by IDs
+                    if random_ids:
+                        cur.execute("""
+                            SELECT vector_id, text_content, metadata 
+                            FROM vector_embeddings 
+                            WHERE vector_id = ANY(%s);
+                        """, (random_ids,))
+                        results = cur.fetchall()
+                conn.close()
+                id_retrieval_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB ID retrieval error: {e}")
+                id_retrieval_times.append(float('inf'))
+        
+        # 5. TimescaleDB Concurrent Search Performance
+        print(f"\n5. TimescaleDB Concurrent Search Performance")
+        concurrent_search_times = []
+        
+        def timescaledb_search_worker():
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata, 
+                               1 - (embedding <=> %s::vector) as similarity
+                        FROM vector_embeddings 
+                        ORDER BY embedding <=> %s::vector 
+                        LIMIT 10;
+                    """, (test_vector, test_vector))
+                    results = cur.fetchall()
+                conn.close()
+                return True
+            except Exception as e:
+                return False
+        
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(timescaledb_search_worker) for _ in range(100)]
+            for future in tqdm(as_completed(futures), total=100, desc="TimescaleDB concurrent searches"):
+                start_time = time.time()
+                success = future.result()
+                concurrent_search_times.append(time.time() - start_time)
+        
+        # 6. TimescaleDB Insert Performance
+        print(f"\n6. TimescaleDB Insert Performance")
+        insert_times = []
+        for i in tqdm(range(iterations), desc="TimescaleDB inserts"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    # Get max ID to avoid conflicts
+                    cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings;")
+                    max_id = cur.fetchone()[0]
+                    
+                    new_vector = np.random.rand(self.vector_dim).astype(np.float32).tolist()
+                    cur.execute("""
+                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        VALUES (%s, %s::vector, %s, %s);
+                    """, (max_id + 100000 + i, new_vector, f"TimescaleDB test document {i}", 
+                          json.dumps({"source": "timescaledb_benchmark", "iteration": i})))
+                conn.close()
+                insert_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB insert error: {e}")
+                insert_times.append(float('inf'))
+        
+        # 7. TimescaleDB Batch Insert Performance
+        print(f"\n7. TimescaleDB Batch Insert Performance")
+        batch_insert_times = []
+        batch_iterations = max(1, iterations // 10)
+        for i in tqdm(range(batch_iterations), desc="TimescaleDB batch inserts"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    # Get max ID to avoid conflicts
+                    cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings;")
+                    max_id = cur.fetchone()[0]
+                    
+                    # Prepare batch data
+                    batch_data = []
+                    for j in range(100):
+                        new_vector = np.random.rand(self.vector_dim).astype(np.float32).tolist()
+                        batch_data.append((
+                            max_id + 100000 + (i * 100) + j,
+                            new_vector,
+                            f"TimescaleDB batch document {i}-{j}",
+                            json.dumps({"source": "timescaledb_batch", "batch": i, "index": j})
+                        ))
+                    
+                    # Batch insert
+                    cur.executemany("""
+                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        VALUES (%s, %s::vector, %s, %s);
+                    """, batch_data)
+                conn.close()
+                batch_insert_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB batch insert error: {e}")
+                batch_insert_times.append(float('inf'))
+        
+        # 8. TimescaleDB Update Performance
+        print(f"\n8. TimescaleDB Update Performance")
+        update_times = []
+        for i in tqdm(range(iterations), desc="TimescaleDB updates"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    # Get random existing record
+                    cur.execute("SELECT vector_id FROM vector_embeddings ORDER BY RANDOM() LIMIT 1;")
+                    result = cur.fetchone()
+                    if result:
+                        vector_id = result[0]
+                        new_vector = np.random.rand(self.vector_dim).astype(np.float32).tolist()
+                        cur.execute("""
+                            UPDATE vector_embeddings 
+                            SET embedding = %s::vector, text_content = %s, metadata = %s
+                            WHERE vector_id = %s;
+                        """, (new_vector, f"Updated TimescaleDB document {i}", 
+                              json.dumps({"source": "timescaledb_update", "iteration": i}), vector_id))
+                conn.close()
+                update_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB update error: {e}")
+                update_times.append(float('inf'))
+        
+        # 9. TimescaleDB Delete Performance
+        print(f"\n9. TimescaleDB Delete Performance")
+        delete_times = []
+        for i in tqdm(range(iterations), desc="TimescaleDB deletes"):
+            start_time = time.time()
+            try:
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    # Get random existing record
+                    cur.execute("SELECT vector_id FROM vector_embeddings ORDER BY RANDOM() LIMIT 1;")
+                    result = cur.fetchone()
+                    if result:
+                        vector_id = result[0]
+                        cur.execute("DELETE FROM vector_embeddings WHERE vector_id = %s;", (vector_id,))
+                conn.close()
+                delete_times.append(time.time() - start_time)
+            except Exception as e:
+                print(f"❌ TimescaleDB delete error: {e}")
+                delete_times.append(float('inf'))
+        
+        # Calculate performance metrics
+        def safe_mean(times):
+            valid_times = [t for t in times if t != float('inf')]
+            return statistics.mean(valid_times) if valid_times else 0
+        
+        def safe_qps(times):
+            valid_times = [t for t in times if t != float('inf')]
+            return 1 / statistics.mean(valid_times) if valid_times else 0
+        
+        return {
+            "single_search": {
+                "times": search_times,
+                "mean_time": safe_mean(search_times),
+                "qps": safe_qps(search_times)
+            },
+            "batch_search": {
+                "times": batch_search_times,
+                "mean_time": safe_mean(batch_search_times),
+                "qps": safe_qps(batch_search_times)
+            },
+            "filtered_search": {
+                "times": filtered_search_times,
+                "mean_time": safe_mean(filtered_search_times),
+                "qps": safe_qps(filtered_search_times)
+            },
+            "retrieve_by_id": {
+                "times": id_retrieval_times,
+                "mean_time": safe_mean(id_retrieval_times),
+                "qps": safe_qps(id_retrieval_times)
+            },
+            "concurrent_search": {
+                "times": concurrent_search_times,
+                "mean_time": safe_mean(concurrent_search_times),
+                "qps": safe_qps(concurrent_search_times)
+            },
+            "single_insert": {
+                "times": insert_times,
+                "mean_time": safe_mean(insert_times),
+                "throughput": safe_qps(insert_times)
+            },
+            "batch_insert_100": {
+                "times": batch_insert_times,
+                "mean_time": safe_mean(batch_insert_times),
+                "throughput": safe_qps(batch_insert_times)
+            },
+            "update": {
+                "times": update_times,
+                "mean_time": safe_mean(update_times),
+                "throughput": safe_qps(update_times)
+            },
+            "delete": {
+                "times": delete_times,
+                "mean_time": safe_mean(delete_times),
+                "throughput": safe_qps(delete_times)
+            }
+        }
+    
     def run_milvus_benchmark(self, collection_name: str, iterations: int = 100):
         """Run Milvus benchmark (read and write operations)"""
         if not MILVUS_AVAILABLE:
@@ -1363,6 +1693,7 @@ class ComprehensiveBenchmarkSuite:
                                   run_read: bool = True,
                                   run_write: bool = True,
                                   run_postgres: bool = True,
+                                  run_postgres_ts: bool = True,
                                   run_comparison: bool = True,
                                   run_load_test: bool = True,
                                   run_milvus: bool = False,
@@ -1418,6 +1749,10 @@ class ComprehensiveBenchmarkSuite:
             # Run PostgreSQL benchmark
             if run_postgres:
                 results["postgres_benchmark"] = self.run_postgres_benchmark(iterations)
+            
+            # Run TimescaleDB benchmark
+            if run_postgres_ts:
+                results["postgres_ts_benchmark"] = self.run_postgres_ts_benchmark(iterations)
             
             # Run database comparison
             if run_comparison:
@@ -1793,6 +2128,7 @@ class ComprehensiveBenchmarkSuite:
         qdrant_read = results.get("read_benchmark", {})
         qdrant_write = results.get("write_benchmark", {})
         postgres = results.get("postgres_benchmark", {})
+        postgres_ts = results.get("postgres_ts_benchmark", {})
         milvus = results.get("milvus_benchmark", {})
         weaviate = results.get("weaviate_benchmark", {})
         
@@ -1829,6 +2165,22 @@ class ComprehensiveBenchmarkSuite:
                 "Batch Insert (100) ops/sec": f"{round(postgres.get('batch_insert_100', {}).get('throughput', 0))}",
                 "Update ops/sec": f"{round(postgres.get('update', {}).get('throughput', 0))}",
                 "Delete ops/sec": f"{round(postgres.get('delete', {}).get('throughput', 0))}"
+            })
+        
+        # TimescaleDB data
+        if postgres_ts and "error" not in postgres_ts:
+            table_data.append({
+                "Database": "TimescaleDB",
+                "Type": "Time-Series + Vector",
+                "Search QPS": f"{round(postgres_ts.get('single_search', {}).get('qps', 0))}",
+                "Batch Search QPS": f"{round(postgres_ts.get('batch_search', {}).get('qps', 0))}",
+                "Filtered Search QPS": f"{round(postgres_ts.get('filtered_search', {}).get('qps', 0))}",
+                "ID Retrieval QPS": f"{round(postgres_ts.get('retrieve_by_id', {}).get('qps', 0))}",
+                "Concurrent Search QPS": f"{round(postgres_ts.get('concurrent_search', {}).get('qps', 0))}",
+                "Single Insert ops/sec": f"{round(postgres_ts.get('single_insert', {}).get('throughput', 0))}",
+                "Batch Insert (100) ops/sec": f"{round(postgres_ts.get('batch_insert_100', {}).get('throughput', 0))}",
+                "Update ops/sec": f"{round(postgres_ts.get('update', {}).get('throughput', 0))}",
+                "Delete ops/sec": f"{round(postgres_ts.get('delete', {}).get('throughput', 0))}"
             })
         
         # Milvus data
@@ -2010,6 +2362,11 @@ def main():
     parser.add_argument("--postgres-user", default="postgres", help="PostgreSQL user")
     parser.add_argument("--postgres-password", default="postgres", help="PostgreSQL password")
     parser.add_argument("--postgres-db", default="vectordb", help="PostgreSQL database")
+    parser.add_argument("--postgres-ts-host", default="localhost", help="TimescaleDB host")
+    parser.add_argument("--postgres-ts-port", type=int, default=5433, help="TimescaleDB port")
+    parser.add_argument("--postgres-ts-user", default="postgres", help="TimescaleDB user")
+    parser.add_argument("--postgres-ts-password", default="postgres", help="TimescaleDB password")
+    parser.add_argument("--postgres-ts-db", default="vectordb", help="TimescaleDB database")
     parser.add_argument("--milvus-host", default="localhost", help="Milvus host")
     parser.add_argument("--milvus-port", type=int, default=19530, help="Milvus port")
     parser.add_argument("--weaviate-host", default="localhost", help="Weaviate host")
@@ -2028,11 +2385,12 @@ def main():
     parser.add_argument("--read", action="store_true", help="Run read benchmark only")
     parser.add_argument("--write", action="store_true", help="Run write benchmark only")
     parser.add_argument("--postgres", action="store_true", help="Run PostgreSQL benchmark only")
+    parser.add_argument("--postgres-ts", action="store_true", help="Run TimescaleDB benchmark only")
     parser.add_argument("--comparison", action="store_true", help="Run database comparison only")
     parser.add_argument("--load-test", action="store_true", help="Run load test only")
     parser.add_argument("--milvus", action="store_true", help="Run Milvus benchmark only")
     parser.add_argument("--weaviate", action="store_true", help="Run Weaviate benchmark only")
-    parser.add_argument("--all-databases", action="store_true", help="Run all database benchmarks (Qdrant, PostgreSQL, Milvus, Weaviate)")
+    parser.add_argument("--all-databases", action="store_true", help="Run all database benchmarks (Qdrant, PostgreSQL, TimescaleDB, Milvus, Weaviate)")
     
     # Output options
     parser.add_argument("--output", default="comprehensive_benchmark_results.json", help="Output file for results")
@@ -2046,12 +2404,13 @@ def main():
         run_milvus = run_weaviate = False
     elif args.all_databases:
         # Run all database benchmarks
-        run_read = run_write = run_postgres = run_comparison = run_load_test = True
+        run_read = run_write = run_postgres = run_postgres_ts = run_comparison = run_load_test = True
         run_milvus = run_weaviate = True
     else:
         run_read = args.read
         run_write = args.write
         run_postgres = args.postgres
+        run_postgres_ts = args.postgres_ts
         run_comparison = args.comparison
         run_load_test = args.load_test
         run_milvus = args.milvus
@@ -2065,6 +2424,11 @@ def main():
         postgres_user=args.postgres_user,
         postgres_password=args.postgres_password,
         postgres_db=args.postgres_db,
+        postgres_ts_host=args.postgres_ts_host,
+        postgres_ts_port=args.postgres_ts_port,
+        postgres_ts_user=args.postgres_ts_user,
+        postgres_ts_password=args.postgres_ts_password,
+        postgres_ts_db=args.postgres_ts_db,
         milvus_host=args.milvus_host,
         milvus_port=args.milvus_port,
         weaviate_host=args.weaviate_host,
@@ -2080,6 +2444,7 @@ def main():
             run_read=run_read,
             run_write=run_write,
             run_postgres=run_postgres,
+            run_postgres_ts=args.postgres_ts,
             run_comparison=run_comparison,
             run_load_test=run_load_test,
             run_milvus=run_milvus,

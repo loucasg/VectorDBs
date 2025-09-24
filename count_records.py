@@ -31,6 +31,9 @@ class RecordCounter:
                  postgres_host="localhost", postgres_port=5432,
                  postgres_user="postgres", postgres_password="postgres",
                  postgres_db="vectordb",
+                 postgres_ts_host="localhost", postgres_ts_port=5433,
+                 postgres_ts_user="postgres", postgres_ts_password="postgres",
+                 postgres_ts_db="vectordb",
                  milvus_host="localhost", milvus_port="19530",
                  weaviate_host="localhost", weaviate_port="8080"):
         self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port)
@@ -40,6 +43,13 @@ class RecordCounter:
             "user": postgres_user,
             "password": postgres_password,
             "database": postgres_db
+        }
+        self.postgres_ts_config = {
+            "host": postgres_ts_host,
+            "port": postgres_ts_port,
+            "user": postgres_ts_user,
+            "password": postgres_ts_password,
+            "database": postgres_ts_db
         }
         self.milvus_host = milvus_host
         self.milvus_port = milvus_port
@@ -124,6 +134,79 @@ class RecordCounter:
                         'data_size': 'Unknown', 
                         'index_size': 'Unknown'
                     }
+                
+                return {
+                    "success": True,
+                    "count": total_count,
+                    "vector_dim": vector_dim,
+                    "table_size": size_info['table_size'],
+                    "data_size": size_info['data_size'],
+                    "index_size": size_info['index_size']
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+        finally:
+            if conn:
+                conn.close()
+    
+    def count_postgres_ts_records(self):
+        """Count records in TimescaleDB table"""
+        conn = None
+        try:
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            conn.autocommit = True  # Enable autocommit to avoid transaction issues
+            
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Count total records
+                cur.execute("SELECT COUNT(*) as total_count FROM vector_embeddings;")
+                total_count = cur.fetchone()['total_count']
+                
+                # Get vector dimension - try different approaches
+                vector_dim = 0
+                
+                # Try to get dimension from pgvector directly (most reliable)
+                try:
+                    cur.execute("""
+                        SELECT vector_dims(embedding) as vector_dim
+                        FROM vector_embeddings 
+                        LIMIT 1;
+                    """)
+                    dim_result = cur.fetchone()
+                    if dim_result and dim_result['vector_dim']:
+                        vector_dim = dim_result['vector_dim']
+                except Exception as e:
+                    print(f"Warning: Could not get vector dimension using vector_dims: {e}")
+                
+                if vector_dim == 0:
+                    # Fallback: try to get dimension from column definition
+                    try:
+                        cur.execute("""
+                            SELECT character_maximum_length 
+                            FROM information_schema.columns 
+                            WHERE table_name = 'vector_embeddings' 
+                            AND column_name = 'embedding';
+                        """)
+                        dim_result = cur.fetchone()
+                        if dim_result and dim_result['character_maximum_length']:
+                            vector_dim = dim_result['character_maximum_length']
+                    except Exception as e:
+                        print(f"Warning: Could not get vector dimension from column definition: {e}")
+                
+                # Get table size info
+                try:
+                    cur.execute("""
+                        SELECT 
+                            pg_size_pretty(pg_total_relation_size('vector_embeddings')) as table_size,
+                            pg_size_pretty(pg_relation_size('vector_embeddings')) as data_size,
+                            pg_size_pretty(pg_total_relation_size('vector_embeddings') - pg_relation_size('vector_embeddings')) as index_size
+                    """)
+                    size_info = cur.fetchone()
+                except Exception as e:
+                    print(f"Warning: Could not get table size info: {e}")
+                    size_info = {'table_size': 'N/A', 'data_size': 'N/A', 'index_size': 'N/A'}
                 
                 return {
                     "success": True,
@@ -290,7 +373,7 @@ class RecordCounter:
                 "error": str(e)
             }
     
-    def print_summary(self, qdrant_result, postgres_result, milvus_result=None, weaviate_result=None, all_collections=None):
+    def print_summary(self, qdrant_result, postgres_result, postgres_ts_result=None, milvus_result=None, weaviate_result=None, all_collections=None):
         """Print a formatted summary of record counts"""
         print("="*80)
         print("DATABASE RECORD COUNT SUMMARY")
@@ -318,6 +401,19 @@ class RecordCounter:
             print(f"  Index Size: {postgres_result['index_size']}")
         else:
             print(f"  ❌ Error: {postgres_result['error']}")
+        
+        # TimescaleDB results
+        if postgres_ts_result:
+            print(f"\n⏰ TIMESCALEDB DATABASE:")
+            if postgres_ts_result["success"]:
+                print(f"  Table: vector_embeddings (hypertable)")
+                print(f"  Records: {postgres_ts_result['count']:,}")
+                print(f"  Vector Dimension: {postgres_ts_result['vector_dim']}")
+                print(f"  Table Size: {postgres_ts_result['table_size']}")
+                print(f"  Data Size: {postgres_ts_result['data_size']}")
+                print(f"  Index Size: {postgres_ts_result['index_size']}")
+            else:
+                print(f"  ❌ Error: {postgres_ts_result['error']}")
         
         # Milvus results
         if milvus_result:
@@ -358,6 +454,8 @@ class RecordCounter:
             successful_results.append(("Qdrant", qdrant_result["count"]))
         if postgres_result["success"]:
             successful_results.append(("PostgreSQL", postgres_result["count"]))
+        if postgres_ts_result and postgres_ts_result["success"]:
+            successful_results.append(("TimescaleDB", postgres_ts_result["count"]))
         if milvus_result and milvus_result["success"]:
             successful_results.append(("Milvus", milvus_result["count"]))
         if weaviate_result and weaviate_result["success"]:
@@ -387,6 +485,7 @@ class RecordCounter:
         # Count specific collection
         qdrant_result = self.count_qdrant_records(collection_name)
         postgres_result = self.count_postgres_records()
+        postgres_ts_result = self.count_postgres_ts_records()
         
         # Count other databases based on flags
         milvus_result = None
@@ -405,11 +504,12 @@ class RecordCounter:
             all_collections = self.count_all_collections()
         
         # Print summary
-        self.print_summary(qdrant_result, postgres_result, milvus_result, weaviate_result, all_collections)
+        self.print_summary(qdrant_result, postgres_result, postgres_ts_result, milvus_result, weaviate_result, all_collections)
         
         return {
             "qdrant": qdrant_result,
             "postgres": postgres_result,
+            "postgres_ts": postgres_ts_result,
             "all_collections": all_collections
         }
 

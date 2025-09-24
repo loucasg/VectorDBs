@@ -30,6 +30,9 @@ class DatabaseBalancer:
                  postgres_host="localhost", postgres_port=5432,
                  postgres_user="postgres", postgres_password="postgres",
                  postgres_db="vectordb",
+                 postgres_ts_host="localhost", postgres_ts_port=5433,
+                 postgres_ts_user="postgres", postgres_ts_password="postgres",
+                 postgres_ts_db="vectordb",
                  milvus_host="localhost", milvus_port=19530,
                  weaviate_host="localhost", weaviate_port=8080):
         self.qdrant_host = qdrant_host
@@ -42,6 +45,14 @@ class DatabaseBalancer:
             "user": postgres_user,
             "password": postgres_password,
             "database": postgres_db
+        }
+        
+        self.postgres_ts_config = {
+            "host": postgres_ts_host,
+            "port": postgres_ts_port,
+            "user": postgres_ts_user,
+            "password": postgres_ts_password,
+            "database": postgres_ts_db
         }
         
         self.milvus_host = milvus_host
@@ -106,6 +117,37 @@ class DatabaseBalancer:
         """Count records in PostgreSQL"""
         try:
             conn = psycopg2.connect(**self.postgres_config)
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
+                count = cur.fetchone()[0]
+                
+                # Get vector dimension by parsing the vector string
+                cur.execute("SELECT embedding FROM vector_embeddings LIMIT 1;")
+                result = cur.fetchone()
+                if result and result[0]:
+                    # Parse the vector string to get dimension
+                    vector_str = result[0]
+                    if vector_str.startswith('[') and vector_str.endswith(']'):
+                        vector_list = eval(vector_str)  # Convert string representation to list
+                        vector_dim = len(vector_list)
+                    else:
+                        vector_dim = self.vector_dim
+                else:
+                    vector_dim = self.vector_dim
+                
+            conn.close()
+            return {
+                "success": True,
+                "count": count,
+                "vector_dim": vector_dim
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def count_postgres_ts_records(self) -> Dict[str, Any]:
+        """Count records in TimescaleDB"""
+        try:
+            conn = psycopg2.connect(**self.postgres_ts_config)
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
                 count = cur.fetchone()[0]
@@ -281,6 +323,51 @@ class DatabaseBalancer:
             print(f"❌ Error adding records to PostgreSQL: {e}")
             return False
     
+    def add_postgres_ts_records(self, count: int) -> bool:
+        """Add records to TimescaleDB"""
+        try:
+            print(f"Adding {count:,} records to TimescaleDB...")
+            
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            
+            # Get current max ID
+            with conn.cursor() as cur:
+                cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings;")
+                max_id = cur.fetchone()[0]
+            
+            # Generate records in batches
+            batch_size = 1000
+            for i in range(0, count, batch_size):
+                current_batch_size = min(batch_size, count - i)
+                
+                values = []
+                for j in range(current_batch_size):
+                    vector_id = max_id + 200000 + i + j  # Use large offset
+                    vector = self.generate_vector()
+                    text_content = f"Balanced TimescaleDB document {vector_id}"
+                    metadata = f'{{"source": "balanced_timescaledb", "id": {vector_id}}}'
+                    
+                    values.append(f"({vector_id}, ARRAY{vector}::vector, '{text_content}', '{metadata}')")
+                
+                insert_query = f"""
+                    INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                    VALUES {', '.join(values)};
+                """
+                
+                with conn.cursor() as cur:
+                    cur.execute(insert_query)
+                    conn.commit()
+                
+                if (i + batch_size) % 10000 == 0:
+                    print(f"  Added {i + batch_size:,} records...")
+            
+            conn.close()
+            print(f"✅ Successfully added {count:,} records to TimescaleDB")
+            return True
+        except Exception as e:
+            print(f"❌ Error adding records to TimescaleDB: {e}")
+            return False
+    
     def add_milvus_records(self, collection_name: str, count: int) -> bool:
         """Add records to Milvus"""
         if not MILVUS_AVAILABLE:
@@ -390,6 +477,7 @@ class DatabaseBalancer:
         
         qdrant_result = self.count_qdrant_records(qdrant_collection)
         postgres_result = self.count_postgres_records()
+        postgres_ts_result = self.count_postgres_ts_records()
         milvus_result = self.count_milvus_records(milvus_collection)
         weaviate_result = self.count_weaviate_records(weaviate_class)
         
@@ -409,6 +497,12 @@ class DatabaseBalancer:
             print(f"🐘 PostgreSQL: {postgres_result['count']:,} records")
         else:
             print(f"❌ PostgreSQL: Error - {postgres_result['error']}")
+        
+        if postgres_ts_result["success"]:
+            counts["TimescaleDB"] = postgres_ts_result["count"]
+            print(f"⏰ TimescaleDB: {postgres_ts_result['count']:,} records")
+        else:
+            print(f"❌ TimescaleDB: Error - {postgres_ts_result['error']}")
         
         if milvus_result["success"]:
             counts["Milvus"] = milvus_result["count"]
@@ -484,6 +578,10 @@ class DatabaseBalancer:
             if self.add_postgres_records(records_to_add["PostgreSQL"]):
                 success_count += 1
         
+        if "TimescaleDB" in records_to_add and postgres_ts_result["success"]:
+            if self.add_postgres_ts_records(records_to_add["TimescaleDB"]):
+                success_count += 1
+        
         if "Milvus" in records_to_add and milvus_result["success"]:
             if self.add_milvus_records(milvus_collection, records_to_add["Milvus"]):
                 success_count += 1
@@ -496,6 +594,7 @@ class DatabaseBalancer:
         print(f"\n🔍 Verifying final counts...")
         final_qdrant = self.count_qdrant_records(qdrant_collection)
         final_postgres = self.count_postgres_records()
+        final_postgres_ts = self.count_postgres_ts_records()
         final_milvus = self.count_milvus_records(milvus_collection)
         final_weaviate = self.count_weaviate_records(weaviate_class)
         
@@ -510,6 +609,10 @@ class DatabaseBalancer:
         if final_postgres["success"]:
             final_counts["PostgreSQL"] = final_postgres["count"]
             print(f"🐘 PostgreSQL: {final_postgres['count']:,} records")
+        
+        if final_postgres_ts["success"]:
+            final_counts["TimescaleDB"] = final_postgres_ts["count"]
+            print(f"⏰ TimescaleDB: {final_postgres_ts['count']:,} records")
         
         if final_milvus["success"]:
             final_counts["Milvus"] = final_milvus["count"]
@@ -545,6 +648,11 @@ def main():
     parser.add_argument("--postgres-user", default="postgres", help="PostgreSQL user")
     parser.add_argument("--postgres-password", default="postgres", help="PostgreSQL password")
     parser.add_argument("--postgres-db", default="vectordb", help="PostgreSQL database")
+    parser.add_argument("--postgres-ts-host", default="localhost", help="TimescaleDB host")
+    parser.add_argument("--postgres-ts-port", type=int, default=5433, help="TimescaleDB port")
+    parser.add_argument("--postgres-ts-user", default="postgres", help="TimescaleDB user")
+    parser.add_argument("--postgres-ts-password", default="postgres", help="TimescaleDB password")
+    parser.add_argument("--postgres-ts-db", default="vectordb", help="TimescaleDB database")
     parser.add_argument("--milvus-host", default="localhost", help="Milvus host")
     parser.add_argument("--milvus-port", type=int, default=19530, help="Milvus port")
     parser.add_argument("--weaviate-host", default="localhost", help="Weaviate host")
@@ -569,6 +677,11 @@ def main():
         postgres_user=args.postgres_user,
         postgres_password=args.postgres_password,
         postgres_db=args.postgres_db,
+        postgres_ts_host=args.postgres_ts_host,
+        postgres_ts_port=args.postgres_ts_port,
+        postgres_ts_user=args.postgres_ts_user,
+        postgres_ts_password=args.postgres_ts_password,
+        postgres_ts_db=args.postgres_ts_db,
         milvus_host=args.milvus_host,
         milvus_port=args.milvus_port,
         weaviate_host=args.weaviate_host,
