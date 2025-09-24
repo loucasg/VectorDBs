@@ -57,8 +57,11 @@ class StandardizedBenchmarkOperations:
         return {
             "id": point_id,
             "vector": self.generate_standard_vector(seed=point_id),
-            "category": f"category_{point_id % 10}",
-            "metadata": {"test_id": point_id}
+            "payload": {
+                "category": f"category_{point_id % 10}",
+                "text_content": f"Test content for point {point_id}",
+                "metadata": {"test_id": point_id}
+            }
         }
 
     def generate_standard_payload(self, point_id: int) -> Dict[str, Any]:
@@ -1788,31 +1791,18 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
     
     # ==================== COMPARISON BENCHMARKS ====================
     
-    def run_database_comparison(self, qdrant_collection: str, iterations: int = 100):
-        """Run direct comparison between Qdrant and PostgreSQL"""
+    def run_database_comparison(self, results: Dict[str, Any]):
+        """Generate comparison analysis from existing benchmark results"""
         print(f"{'='*60}")
         print(f"DATABASE COMPARISON")
         print(f"{'='*60}")
-        
-        # Use lighter iterations for comparison to avoid timeouts
-        comparison_iterations = min(iterations, 10)
-        
-        # Run Qdrant benchmark with reduced iterations
-        try:
-            qdrant_benchmark = self.run_read_benchmark(qdrant_collection, comparison_iterations)
-        except Exception as e:
-            print(f"❌ Qdrant benchmark failed: {e}")
-            qdrant_benchmark = None
-        
-        # Run PostgreSQL benchmark with reduced iterations
-        try:
-            postgres_results = self.run_postgres_benchmark(comparison_iterations)
-        except Exception as e:
-            print(f"❌ PostgreSQL benchmark failed: {e}")
-            postgres_results = None
-        
+
+        # Use existing benchmark results instead of running new benchmarks
+        qdrant_benchmark = results.get("qdrant_benchmark")
+        postgres_results = results.get("postgres_benchmark")
+
         if not any([qdrant_benchmark, postgres_results]):
-            print("Error: Could not complete database comparison - all benchmarks failed")
+            print("Error: Could not complete database comparison - no valid benchmark results available")
             return None
         
         # Calculate performance ratios
@@ -2875,7 +2865,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                     print("="*60)
                     print("RUNNING DATABASE COMPARISON")
                     print("="*60)
-                    results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
+                    results["database_comparison"] = self.run_database_comparison(results)
                 except Exception as e:
                     print(f"❌ Database comparison failed: {e}")
                     results["database_comparison"] = {"error": str(e)}
@@ -2897,33 +2887,64 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             raise
     
     def print_summary(self, results):
-        """Print benchmark summary"""
+        """Print consistent benchmark summary for all databases"""
         print("="*80)
         print("BENCHMARK SUMMARY")
         print("="*80)
-        
-        if results.get("qdrant_benchmark"):
-            print("QDRANT PERFORMANCE:")
-            qdrant_results = results["qdrant_benchmark"]
-            for operation, stats in qdrant_results.items():
-                if 'qps' in stats:
-                    print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['qps']:.2f} QPS")
-                elif 'throughput' in stats:
-                    if 'batch_size' in stats:
-                        print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} points/sec")
-                    else:
-                        print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} ops/sec")
-        
-        if results["postgres_benchmark"]:
-            print("POSTGRESQL PERFORMANCE:")
-            postgres_results = results["postgres_benchmark"]
-            for operation, stats in postgres_results.items():
-                if 'qps' in stats:
-                    print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['qps']:.2f} QPS")
+
+        # Helper function to format operation results consistently
+        def format_operation_summary(operation, stats):
+            if not stats:
+                return f"  {operation}: N/A"
+
+            mean_time = stats.get('mean', 0)
+            if 'qps' in stats:
+                return f"  {operation}: {mean_time:.4f}s mean, {stats['qps']:.2f} QPS"
+            elif 'throughput' in stats:
+                if 'batch_size' in stats:
+                    return f"  {operation}: {mean_time:.4f}s mean, {stats['throughput']:.2f} points/sec"
                 else:
-                    print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} ops/sec")
-        
-        if results["database_comparison"] and "ratios" in results["database_comparison"]:
+                    return f"  {operation}: {mean_time:.4f}s mean, {stats['throughput']:.2f} ops/sec"
+            else:
+                return f"  {operation}: {mean_time:.4f}s mean"
+
+        # Define key operations for consistent reporting
+        key_operations = [
+            ('single_search', 'Single Search'),
+            ('batch_search', 'Batch Search'),
+            ('filtered_search', 'Filtered Search'),
+            ('retrieve_by_id', 'ID Retrieval'),
+            ('concurrent_search', 'Concurrent Search'),
+            ('single_insert', 'Single Insert'),
+            ('batch_insert_100', 'Batch Insert (100)'),
+            ('update', 'Update'),
+            ('delete', 'Delete')
+        ]
+
+        # Print results for each database in consistent format
+        databases = [
+            ('qdrant_benchmark', 'QDRANT PERFORMANCE'),
+            ('postgres_benchmark', 'POSTGRESQL PERFORMANCE'),
+            ('postgres_ts_benchmark', 'TIMESCALEDB PERFORMANCE'),
+            ('milvus_benchmark', 'MILVUS PERFORMANCE'),
+            ('weaviate_benchmark', 'WEAVIATE PERFORMANCE')
+        ]
+
+        for db_key, db_title in databases:
+            if results.get(db_key):
+                db_results = results[db_key]
+                if "error" in db_results:
+                    print(f"{db_title}:")
+                    print(f"  Error: {db_results['error']}")
+                else:
+                    print(f"{db_title}:")
+                    for op_key, op_name in key_operations:
+                        if op_key in db_results:
+                            print(format_operation_summary(op_name, db_results[op_key]))
+                print()  # Add spacing between databases
+
+        # Database comparison summary
+        if results.get("database_comparison") and "ratios" in results["database_comparison"]:
             print("DATABASE COMPARISON:")
             ratios = results["database_comparison"]["ratios"]
             for metric, ratio in ratios.items():
@@ -2931,32 +2952,16 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                     print(f"  Search Performance: Qdrant is {ratio['qdrant_vs_postgres']:.1f}x {'faster' if ratio['qdrant_vs_postgres'] > 1 else 'slower'}")
                 elif 'insert' in metric:
                     print(f"  Insert Performance: Qdrant is {ratio['qdrant_vs_postgres']:.1f}x {'faster' if ratio['qdrant_vs_postgres'] > 1 else 'slower'}")
-        
-        if results["load_test"]:
+            print()
+
+        # Load test results
+        if results.get("load_test"):
             print("LOAD TEST RESULTS:")
             load_stats = results["load_test"]
             print(f"  CPU Usage: {load_stats['cpu_usage']['mean']:.1f}% mean, {load_stats['cpu_usage']['max']:.1f}% max")
             print(f"  Memory Usage: {load_stats['memory_usage']['mean']:.1f}% mean, {load_stats['memory_usage']['max']:.1f}% max")
-        
-        # New database performance summaries
-        if results["milvus_benchmark"]:
-            print("MILVUS PERFORMANCE:")
-            milvus_results = results["milvus_benchmark"]
-            if "error" in milvus_results:
-                print(f"  Error: {milvus_results['error']}")
-            else:
-                print(f"  Search: {milvus_results['single_search']['mean']:.4f}s mean, {milvus_results['single_search']['qps']:.2f} QPS")
-                print(f"  Insert: {milvus_results['single_insert']['mean']:.4f}s mean, {milvus_results['single_insert']['throughput']:.2f} ops/sec")
-        
-        if results["weaviate_benchmark"]:
-            print("WEAVIATE PERFORMANCE:")
-            weaviate_results = results["weaviate_benchmark"]
-            if "error" in weaviate_results:
-                print(f"  Error: {weaviate_results['error']}")
-            else:
-                print(f"  Search: {weaviate_results['single_search']['mean']:.4f}s mean, {weaviate_results['single_search']['qps']:.2f} QPS")
-                print(f"  Insert: {weaviate_results['single_insert']['mean']:.4f}s mean, {weaviate_results['single_insert']['throughput']:.2f} ops/sec")
-        
+            print()
+
         # Add comprehensive performance comparison summary
         self.print_performance_comparison_summary(results)
         
@@ -3132,7 +3137,11 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             # Show performance ratios
             if len(write_data) >= 2:
                 fastest = write_data[0]
-                print(f"  🏆 {fastest['name']} is {fastest['ops_per_sec']/write_data[-1]['ops_per_sec']:.1f}x faster than {write_data[-1]['name']}")
+                slowest = write_data[-1]
+                if slowest['ops_per_sec'] > 0:
+                    print(f"  🏆 {fastest['name']} is {fastest['ops_per_sec']/slowest['ops_per_sec']:.1f}x faster than {slowest['name']}")
+                else:
+                    print(f"  🏆 {fastest['name']} is {fastest['ops_per_sec']:.1f}x faster (slowest has 0 ops/sec)")
         
         # Additional Qdrant-specific write features
         if qdrant_benchmark:
