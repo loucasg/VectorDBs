@@ -45,9 +45,9 @@ class MilvusPopulator:
     def create_collection(self):
         """Create collection if it doesn't exist, or check if it exists"""
         try:
-            # Check if collection exists
-            if utility.has_collection(self.collection_name):
-                collection = Collection(self.collection_name)
+            # Check if collection exists using the connection alias
+            if utility.has_collection(self.collection_name, using=self.connection_alias):
+                collection = Collection(self.collection_name, using=self.connection_alias)
                 print(f"Collection '{self.collection_name}' already exists. Adding to existing collection...")
                 
                 # Get the vector dimension from existing collection
@@ -73,7 +73,7 @@ class MilvusPopulator:
                 ]
                 
                 schema = CollectionSchema(fields, f"Collection for {self.collection_name}")
-                collection = Collection(self.collection_name, schema)
+                collection = Collection(self.collection_name, schema, using=self.connection_alias)
                 
                 # Create index
                 index_params = {
@@ -93,7 +93,7 @@ class MilvusPopulator:
     def get_next_available_id(self):
         """Get the next available ID to avoid conflicts when adding to existing data"""
         try:
-            collection = Collection(self.collection_name)
+            collection = Collection(self.collection_name, using=self.connection_alias)
             if not collection.is_empty:
                 # Get the last inserted ID by querying the collection
                 # Since we use auto_id=True, we need to get the max ID
@@ -141,7 +141,7 @@ class MilvusPopulator:
     def insert_batch(self, vectors, text_contents, metadata_list):
         """Insert a batch of data into Milvus"""
         try:
-            collection = Collection(self.collection_name)
+            collection = Collection(self.collection_name, using=self.connection_alias)
             
             # Prepare data for insertion
             data = [
@@ -219,7 +219,7 @@ class MilvusPopulator:
         
         # Get final collection stats
         try:
-            collection = Collection(self.collection_name)
+            collection = Collection(self.collection_name, using=self.connection_alias)
             collection.load()  # Load collection into memory for querying
             stats = collection.get_stats()
             entity_count = collection.num_entities

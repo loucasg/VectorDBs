@@ -35,7 +35,7 @@ services:
 
   # Milvus vector database
   milvus:
-    image: milvusdb/milvus:latest
+    image: milvusdb/milvus:v2.4.0
     container_name: milvus_vector_db
     ports:
       - "19530:19530"  # gRPC API
@@ -67,19 +67,6 @@ services:
       - weaviate_data:/var/lib/weaviate
     restart: unless-stopped
 
-  # Vespa vector database
-  vespa:
-    image: vespaengine/vespa:latest
-    container_name: vespa_vector_db
-    ports:
-      - "8081:8080"    # Application port (mapped to 8081 to avoid conflict)
-      - "19071:19071"  # Admin API
-    environment:
-      - VESPA_CONFIGSERVERS=localhost
-    volumes:
-      - vespa_data:/opt/vespa/var
-    restart: unless-stopped
-    command: ["sh", "-c", "vespa-start-services && tail -f /dev/null"]
 
 volumes:
   qdrant_storage:
@@ -89,6 +76,4 @@ volumes:
   milvus_data:
     driver: local
   weaviate_data:
-    driver: local
-  vespa_data:
     driver: local

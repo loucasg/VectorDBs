@@ -33,9 +33,11 @@ class WeaviatePopulator:
     def connect(self):
         """Connect to Weaviate server"""
         try:
-            self.client = weaviate.Client(
-                url=f"http://{self.host}:{self.port}",
-                additional_headers={"X-OpenAI-Api-Key": "dummy"}  # Required even if not using OpenAI
+            # Use Weaviate v4 client
+            self.client = weaviate.connect_to_local(
+                host=self.host,
+                port=self.port,
+                grpc_port=50051
             )
             
             # Test connection
@@ -53,50 +55,30 @@ class WeaviatePopulator:
         """Create collection if it doesn't exist, or check if it exists"""
         try:
             # Check if collection exists
-            if self.client.schema.exists(self.collection_name):
+            if self.client.collections.exists(self.collection_name):
                 print(f"Collection '{self.collection_name}' already exists. Adding to existing collection...")
-                
-                # Get the vector dimension from existing collection
-                schema = self.client.schema.get(self.collection_name)
-                vectorizer_config = schema.get("vectorizer", {})
-                if "vectorIndexConfig" in vectorizer_config:
-                    existing_dim = vectorizer_config["vectorIndexConfig"].get("vectorCacheMaxObjects", 0)
-                    if existing_dim and existing_dim != self.vector_dim:
-                        print(f"⚠️  Warning: Collection may have different vector dimension than {self.vector_dim}")
-                
                 return True
             else:
                 # Create new collection
                 print(f"Creating new collection '{self.collection_name}'...")
                 
-                # Define collection schema
-                collection_schema = {
-                    "class": self.collection_name,
-                    "description": f"Collection for {self.collection_name}",
-                    "vectorizer": "none",  # We'll provide our own vectors
-                    "vectorIndexType": "hnsw",
-                    "vectorIndexConfig": {
-                        "distance": "cosine",
-                        "ef": 64,
-                        "efConstruction": 128,
-                        "maxConnections": 16,
-                        "vectorCacheMaxObjects": 1000000
-                    },
-                    "properties": [
-                        {
-                            "name": "text_content",
-                            "dataType": ["text"],
-                            "description": "Text content of the document"
-                        },
-                        {
-                            "name": "metadata",
-                            "dataType": ["text"],
-                            "description": "Metadata as JSON string"
-                        }
+                # Define collection schema using v4 API
+                collection = self.client.collections.create(
+                    name=self.collection_name,
+                    vector_config=wvc.config.Configure.Vectorizer.none(),
+                    properties=[
+                        wvc.config.Property(
+                            name="text_content",
+                            data_type=wvc.config.DataType.TEXT,
+                            description="Text content of the document"
+                        ),
+                        wvc.config.Property(
+                            name="metadata",
+                            data_type=wvc.config.DataType.TEXT,
+                            description="Metadata as JSON string"
+                        )
                     ]
-                }
-                
-                self.client.schema.create_class(collection_schema)
+                )
                 print(f"✅ Collection '{self.collection_name}' created successfully")
                 return True
                 
@@ -107,11 +89,10 @@ class WeaviatePopulator:
     def get_collection_count(self):
         """Get the current count of objects in the collection"""
         try:
-            result = self.client.query.aggregate(self.collection_name).with_meta_count().do()
-            if "data" in result and "Aggregate" in result["data"]:
-                count = result["data"]["Aggregate"][self.collection_name][0]["meta"]["count"]
-                return count
-            return 0
+            collection = self.client.collections.get(self.collection_name)
+            # Use aggregate to get count
+            result = collection.aggregate.over_all(total_count=True)
+            return result.total_count
         except Exception as e:
             print(f"Error getting collection count: {e}")
             return 0
@@ -150,17 +131,22 @@ class WeaviatePopulator:
     def insert_batch(self, objects):
         """Insert a batch of data into Weaviate"""
         try:
-            # Use batch insert
-            with self.client.batch as batch:
-                for obj in objects:
-                    batch.add_data_object(
-                        data_object={
-                            "text_content": obj["text_content"],
-                            "metadata": obj["metadata"]
-                        },
-                        class_name=self.collection_name,
-                        vector=obj["vector"]
-                    )
+            # Get the collection
+            collection = self.client.collections.get(self.collection_name)
+            
+            # Prepare data for batch insert using DataObject
+            data_objects = []
+            for obj in objects:
+                data_objects.append(wvc.data.DataObject(
+                    properties={
+                        "text_content": obj["text_content"],
+                        "metadata": obj["metadata"]
+                    },
+                    vector=obj["vector"]
+                ))
+            
+            # Insert batch
+            collection.data.insert_many(data_objects)
             
             return True, len(objects)
         except Exception as e:
@@ -292,6 +278,10 @@ def main():
     except Exception as e:
         print(f"\n❌ Error during population: {e}")
         return 1
+    finally:
+        # Close connection
+        if populator.client:
+            populator.client.close()
 
 
 if __name__ == "__main__":

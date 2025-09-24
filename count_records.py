@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Record Counter Script
-Counts records in all vector databases: Qdrant, PostgreSQL, Milvus, Weaviate, and Vespa.
+Counts records in vector databases: Qdrant, PostgreSQL, Milvus, and Weaviate.
+By default, counts all databases. Use --qdrant-only to count only Qdrant and PostgreSQL.
 """
 
 import argparse
@@ -31,8 +32,7 @@ class RecordCounter:
                  postgres_user="postgres", postgres_password="postgres",
                  postgres_db="vectordb",
                  milvus_host="localhost", milvus_port="19530",
-                 weaviate_host="localhost", weaviate_port="8080",
-                 vespa_host="localhost", vespa_port="8081"):
+                 weaviate_host="localhost", weaviate_port="8080"):
         self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port)
         self.postgres_config = {
             "host": postgres_host,
@@ -45,8 +45,6 @@ class RecordCounter:
         self.milvus_port = milvus_port
         self.weaviate_host = weaviate_host
         self.weaviate_port = weaviate_port
-        self.vespa_host = vespa_host
-        self.vespa_port = vespa_port
     
     def count_qdrant_records(self, collection_name="test_vectors"):
         """Count records in Qdrant collection"""
@@ -162,14 +160,14 @@ class RecordCounter:
             )
             
             # Check if collection exists
-            if not utility.has_collection(collection_name):
+            if not utility.has_collection(collection_name, using=connection_alias):
                 return {
                     "success": False,
                     "error": f"Collection '{collection_name}' does not exist"
                 }
             
             # Get collection info
-            collection = Collection(collection_name)
+            collection = Collection(collection_name, using=connection_alias)
             collection.load()
             
             # Get entity count
@@ -213,10 +211,11 @@ class RecordCounter:
             }
         
         try:
-            # Connect to Weaviate
-            client = weaviate.Client(
-                url=f"http://{self.weaviate_host}:{self.weaviate_port}",
-                additional_headers={"X-OpenAI-Api-Key": "dummy"}
+            # Connect to Weaviate using v4 API
+            client = weaviate.connect_to_local(
+                host=self.weaviate_host,
+                port=self.weaviate_port,
+                grpc_port=50051
             )
             
             if not client.is_ready():
@@ -225,32 +224,28 @@ class RecordCounter:
                     "error": "Weaviate server not ready"
                 }
             
-            # Check if class exists
-            if not client.schema.exists(collection_name):
+            # Check if collection exists
+            if not client.collections.exists(collection_name):
                 return {
                     "success": False,
-                    "error": f"Class '{collection_name}' does not exist"
+                    "error": f"Collection '{collection_name}' does not exist"
                 }
             
-            # Get object count
-            result = client.query.aggregate(collection_name).with_meta_count().do()
-            if "data" in result and "Aggregate" in result["data"]:
-                count = result["data"]["Aggregate"][collection_name][0]["meta"]["count"]
-            else:
-                count = 0
+            # Get collection and count
+            collection = client.collections.get(collection_name)
+            result = collection.aggregate.over_all(total_count=True)
+            count = result.total_count
             
-            # Get class schema
-            schema = client.schema.get(collection_name)
-            vectorizer_config = schema.get("vectorizer", {})
-            vector_index_config = vectorizer_config.get("vectorIndexConfig", {})
+            # Get collection config
+            config = collection.config.get()
             
             return {
                 "success": True,
                 "count": count,
                 "collection_name": collection_name,
-                "vectorizer": vectorizer_config.get("vectorizer", "none"),
-                "index_type": vector_index_config.get("vectorIndexType", "Unknown"),
-                "distance_metric": vector_index_config.get("distance", "Unknown")
+                "vectorizer": "none",  # We're using custom vectors
+                "index_type": "HNSW",  # Default for Weaviate
+                "distance_metric": "COSINE"  # Default for Weaviate
             }
             
         except Exception as e:
@@ -259,49 +254,11 @@ class RecordCounter:
                 "error": str(e),
                 "collection_name": collection_name
             }
+        finally:
+            # Close Weaviate connection
+            if 'client' in locals():
+                client.close()
     
-    def count_vespa_records(self, application_name="test_vectors", document_type="test_vector"):
-        """Count records in Vespa application"""
-        try:
-            # Test connection
-            response = requests.get(f"http://{self.vespa_host}:{self.vespa_port}/ApplicationStatus", timeout=10)
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "error": f"Vespa server not ready (status: {response.status_code})"
-                }
-            
-            # Count documents using search
-            search_url = f"http://{self.vespa_host}:{self.vespa_port}/search/"
-            params = {
-                "yql": f"select * from {document_type} limit 0",
-                "hits": 0
-            }
-            
-            response = requests.get(search_url, params=params, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                total_count = data.get("root", {}).get("totalCount", 0)
-            else:
-                return {
-                    "success": False,
-                    "error": f"Could not query Vespa (status: {response.status_code})"
-                }
-            
-            return {
-                "success": True,
-                "count": total_count,
-                "application_name": application_name,
-                "document_type": document_type,
-                "search_endpoint": f"http://{self.vespa_host}:{self.vespa_port}/search/"
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "application_name": application_name
-            }
     
     def count_all_collections(self):
         """Count records in all Qdrant collections"""
@@ -333,7 +290,7 @@ class RecordCounter:
                 "error": str(e)
             }
     
-    def print_summary(self, qdrant_result, postgres_result, milvus_result=None, weaviate_result=None, vespa_result=None, all_collections=None):
+    def print_summary(self, qdrant_result, postgres_result, milvus_result=None, weaviate_result=None, all_collections=None):
         """Print a formatted summary of record counts"""
         print("="*80)
         print("DATABASE RECORD COUNT SUMMARY")
@@ -386,17 +343,6 @@ class RecordCounter:
             else:
                 print(f"  ❌ Error: {weaviate_result['error']}")
         
-        # Vespa results
-        if vespa_result:
-            print(f"\n⚡ VESPA DATABASE:")
-            if vespa_result["success"]:
-                print(f"  Application: {vespa_result['application_name']}")
-                print(f"  Document Type: {vespa_result['document_type']}")
-                print(f"  Records: {vespa_result['count']:,}")
-                print(f"  Search Endpoint: {vespa_result['search_endpoint']}")
-            else:
-                print(f"  ❌ Error: {vespa_result['error']}")
-        
         # All collections if requested
         if all_collections and all_collections["success"]:
             print(f"\n📊 ALL QDRANT COLLECTIONS:")
@@ -416,8 +362,6 @@ class RecordCounter:
             successful_results.append(("Milvus", milvus_result["count"]))
         if weaviate_result and weaviate_result["success"]:
             successful_results.append(("Weaviate", weaviate_result["count"]))
-        if vespa_result and vespa_result["success"]:
-            successful_results.append(("Vespa", vespa_result["count"]))
         
         if len(successful_results) > 1:
             print(f"\n📈 MULTI-DATABASE COMPARISON:")
@@ -436,7 +380,7 @@ class RecordCounter:
                 diff = max_count - min_count
                 print(f"  📈 {max_db} has {diff:,} more records than {min_db}")
     
-    def run_count(self, collection_name="test_vectors", show_all_collections=False, include_all_databases=False):
+    def run_count(self, collection_name="test_vectors", show_all_collections=False, include_all_databases=True, qdrant_only=False):
         """Run the record counting process"""
         print(f"Counting records in '{collection_name}' collection...")
         
@@ -444,16 +388,16 @@ class RecordCounter:
         qdrant_result = self.count_qdrant_records(collection_name)
         postgres_result = self.count_postgres_records()
         
-        # Count other databases if requested
+        # Count other databases based on flags
         milvus_result = None
         weaviate_result = None
-        vespa_result = None
         
-        if include_all_databases:
+        if include_all_databases and not qdrant_only:
             print("Counting records in all databases...")
             milvus_result = self.count_milvus_records(collection_name)
             weaviate_result = self.count_weaviate_records("TestVectors")
-            vespa_result = self.count_vespa_records("test_vectors", "test_vector")
+        elif qdrant_only:
+            print("Counting records in Qdrant and PostgreSQL only...")
         
         # Count all collections if requested
         all_collections = None
@@ -461,7 +405,7 @@ class RecordCounter:
             all_collections = self.count_all_collections()
         
         # Print summary
-        self.print_summary(qdrant_result, postgres_result, milvus_result, weaviate_result, vespa_result, all_collections)
+        self.print_summary(qdrant_result, postgres_result, milvus_result, weaviate_result, all_collections)
         
         return {
             "qdrant": qdrant_result,
@@ -474,7 +418,8 @@ def main():
     parser = argparse.ArgumentParser(description="Count records in vector databases")
     parser.add_argument("--collection", default="test_vectors", help="Collection name to count")
     parser.add_argument("--all-collections", action="store_true", help="Show counts for all Qdrant collections")
-    parser.add_argument("--all-databases", action="store_true", help="Count records in all databases (Qdrant, PostgreSQL, Milvus, Weaviate, Vespa)")
+    parser.add_argument("--all-databases", action="store_true", default=True, help="Count records in all databases (Qdrant, PostgreSQL, Milvus, Weaviate) - this is the default behavior")
+    parser.add_argument("--qdrant-only", action="store_true", help="Count records only in Qdrant and PostgreSQL (skip Milvus and Weaviate)")
     
     # Database connection arguments
     parser.add_argument("--qdrant-host", default="localhost", help="Qdrant host")
@@ -488,8 +433,6 @@ def main():
     parser.add_argument("--milvus-port", type=int, default=19530, help="Milvus port")
     parser.add_argument("--weaviate-host", default="localhost", help="Weaviate host")
     parser.add_argument("--weaviate-port", type=int, default=8080, help="Weaviate port")
-    parser.add_argument("--vespa-host", default="localhost", help="Vespa host")
-    parser.add_argument("--vespa-port", type=int, default=8081, help="Vespa port")
     
     args = parser.parse_args()
     
@@ -505,15 +448,14 @@ def main():
         milvus_port=args.milvus_port,
         weaviate_host=args.weaviate_host,
         weaviate_port=args.weaviate_port,
-        vespa_host=args.vespa_host,
-        vespa_port=args.vespa_port
     )
     
     try:
         results = counter.run_count(
             collection_name=args.collection,
             show_all_collections=args.all_collections,
-            include_all_databases=args.all_databases
+            include_all_databases=args.all_databases,
+            qdrant_only=args.qdrant_only
         )
     except KeyboardInterrupt:
         print("\nCount interrupted by user")
