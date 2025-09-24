@@ -84,54 +84,25 @@ python3 populate_qdrant.py \
 echo "Database population completed!"
 echo ""
 
-# 2. Run Read Benchmark
+# 2. Run All Benchmarks
 echo "=========================================="
-echo "Step 2: Read Performance Benchmark"
+echo "Step 2: Comprehensive Benchmark Suite"
 echo "=========================================="
-python3 benchmark_reads.py \
-    --host $HOST \
-    --port $PORT \
-    --collection test_vectors \
-    --iterations $ITERATIONS \
-    --output "$RESULTS_DIR/read_benchmark_results.json"
-
-echo "Read benchmark completed!"
-echo ""
-
-# 3. Run Write Benchmark
-echo "=========================================="
-echo "Step 3: Write Performance Benchmark"
-echo "=========================================="
-python3 benchmark_writes.py \
-    --host $HOST \
-    --port $PORT \
-    --collection write_test_vectors \
-    --iterations $ITERATIONS \
-    --output "$RESULTS_DIR/write_benchmark_results.json" \
-    --cleanup
-
-echo "Write benchmark completed!"
-echo ""
-
-# 4. Run Comprehensive Benchmark
-echo "=========================================="
-echo "Step 4: Comprehensive Benchmark"
-echo "=========================================="
-python3 benchmark_comprehensive.py \
-    --host $HOST \
-    --port $PORT \
+python3 benchmark_all.py \
+    --qdrant-host $HOST \
+    --qdrant-port $PORT \
     --read-collection test_vectors \
-    --write-collection write_test_vectors \
+    --write-collection test_vectors \
     --iterations $ITERATIONS \
     --load-duration 120 \
     --output "$RESULTS_DIR/comprehensive_benchmark_results.json"
 
-echo "Comprehensive benchmark completed!"
+echo "All benchmarks completed!"
 echo ""
 
-# 5. Generate Summary Report
+# 3. Generate Summary Report
 echo "=========================================="
-echo "Step 5: Generating Summary Report"
+echo "Step 3: Generating Summary Report"
 echo "=========================================="
 
 cat > "$RESULTS_DIR/summary_report.md" << EOF
@@ -212,7 +183,7 @@ echo "4. Consider system resource optimization if needed" >> "$RESULTS_DIR/summa
 echo "Summary report generated: $RESULTS_DIR/summary_report.md"
 echo ""
 
-# 6. Cleanup (optional)
+# 4. Cleanup (optional)
 read -p "Do you want to stop Qdrant and clean up? (y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then

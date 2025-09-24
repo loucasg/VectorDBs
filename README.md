@@ -99,20 +99,8 @@ python benchmark_all.py --read --write
 python benchmark_all.py --comparison --load-test
 ```
 
-#### Individual Scripts (Legacy)
-```bash
-# Run read performance benchmark (Qdrant)
-python benchmark_reads.py
-
-# Run write performance benchmark (Qdrant)
-python benchmark_writes.py
-
-# Compare both databases
-python compare_databases.py --queries 100
-
-# Run comprehensive benchmark (includes load testing)
-python benchmark_comprehensive.py
-```
+#### All Functionality Available in benchmark_all.py
+All individual benchmark functionality is now consolidated into the single `benchmark_all.py` script with flags for different test types.
 
 ### 7. Count Records
 
@@ -164,10 +152,6 @@ python count_records.py --collection my_collection
 - **`reset_databases.py`** - Resets both databases to clean state
 - **`count_records.py`** - Counts and compares records across both databases
 - **`simple_ui.py`** - Custom web interface for collection management and exploration
-- **`benchmark_reads.py`** - Tests read performance (search, retrieve, scroll) - *Legacy*
-- **`benchmark_writes.py`** - Tests write performance (insert, update, delete) - *Legacy*
-- **`compare_databases.py`** - Compares Qdrant vs PostgreSQL performance - *Legacy*
-- **`benchmark_comprehensive.py`** - Runs all benchmarks with system monitoring - *Legacy*
 
 ### Configuration Files
 
@@ -286,7 +270,7 @@ All results are saved to the `results/` directory as JSON files with comprehensi
 
 ### Migration from Individual Scripts
 
-The consolidated script replaces these individual scripts:
+The consolidated script replaces these individual scripts (now removed):
 - `benchmark_reads.py` → `--read` flag
 - `benchmark_writes.py` → `--write` flag
 - `benchmark_comprehensive.py` → `--all` flag
