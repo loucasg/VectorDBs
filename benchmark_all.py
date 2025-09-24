@@ -146,9 +146,9 @@ class ComprehensiveBenchmarkSuite:
     # ==================== READ BENCHMARKS ====================
     
     def run_read_benchmark(self, collection_name: str, iterations: int = 100):
-        """Run comprehensive read performance benchmark"""
+        """Run comprehensive Qdrant performance benchmark (read and write operations)"""
         print(f"\n{'='*60}")
-        print(f"READ BENCHMARK - Collection: {collection_name}")
+        print(f"QDRANT BENCHMARK - Collection: {collection_name}")
         print(f"{'='*60}")
         
         try:
@@ -162,8 +162,8 @@ class ComprehensiveBenchmarkSuite:
         
         read_results = {}
         
-        # 1. Single Vector Search
-        print("\n1. Single Vector Search (10 results)")
+        # 1. Single Search Performance
+        print("\n1. Single Search Performance")
         single_search_times = []
         for _ in tqdm(range(iterations), desc="Single searches"):
             query_vector = self.generate_query_vector()
@@ -185,8 +185,8 @@ class ComprehensiveBenchmarkSuite:
             'qps': 1.0 / statistics.mean(single_search_times)
         }
         
-        # 2. Batch Search
-        print("\n2. Batch Vector Search (5 vectors, 10 results each)")
+        # 2. Batch Search Performance
+        print("\n2. Batch Search Performance")
         batch_search_times = []
         batch_iterations = max(1, iterations // 10)
         for _ in tqdm(range(batch_iterations), desc="Batch searches"):
@@ -208,8 +208,8 @@ class ComprehensiveBenchmarkSuite:
             'qps': 1.0 / statistics.mean(batch_search_times)
         }
         
-        # 3. Filtered Search
-        print("\n3. Filtered Vector Search")
+        # 3. Filtered Search Performance
+        print("\n3. Filtered Search Performance")
         filtered_search_times = []
         categories = ["A", "B", "C", "D"]
         for _ in tqdm(range(iterations), desc="Filtered searches"):
@@ -240,8 +240,8 @@ class ComprehensiveBenchmarkSuite:
             'qps': 1.0 / statistics.mean(filtered_search_times)
         }
         
-        # 4. Retrieve by ID
-        print("\n4. Retrieve by ID (10 points)")
+        # 4. ID Retrieval Performance
+        print("\n4. ID Retrieval Performance")
         retrieve_times = []
         point_ids = [np.random.randint(0, collection_info.points_count) for _ in range(10)]
         for _ in tqdm(range(iterations), desc="ID retrievals"):
@@ -262,33 +262,9 @@ class ComprehensiveBenchmarkSuite:
             'qps': 1.0 / statistics.mean(retrieve_times)
         }
         
-        # 5. Scroll
-        print("\n5. Scroll Collection (1000 points)")
-        scroll_times = []
-        scroll_iterations = max(1, iterations // 10)
-        for _ in tqdm(range(scroll_iterations), desc="Scroll operations"):
-            start_time = time.time()
-            self.qdrant_client.scroll(
-                collection_name=collection_name,
-                limit=1000,
-                with_payload=True,
-                with_vectors=True
-            )
-            scroll_times.append(time.time() - start_time)
-        
-        read_results['scroll'] = {
-            'mean': statistics.mean(scroll_times),
-            'median': statistics.median(scroll_times),
-            'p95': np.percentile(scroll_times, 95),
-            'p99': np.percentile(scroll_times, 99),
-            'min': min(scroll_times),
-            'max': max(scroll_times),
-            'qps': 1.0 / statistics.mean(scroll_times)
-        }
-        
-        # 6. Concurrent Searches
+        # 5. Concurrent Search Performance
         concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
-        print(f"\n6. Concurrent Searches ({concurrent_queries} queries, 10 workers)")
+        print(f"\n5. Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
         def single_search():
             query_vector = self.generate_query_vector()
             start_time = time.time()
@@ -313,6 +289,109 @@ class ComprehensiveBenchmarkSuite:
             'min': min(concurrent_times),
             'max': max(concurrent_times),
             'qps': 1.0 / statistics.mean(concurrent_times)
+        }
+        
+        # 6. Single Insert Performance
+        print("\n6. Single Insert Performance")
+        single_insert_times = []
+        for _ in tqdm(range(iterations), desc="Single inserts"):
+            point = self.generate_test_point(self.next_id)
+            self.next_id += 1
+            
+            start_time = time.time()
+            self.qdrant_client.upsert(
+                collection_name=collection_name,
+                points=[point]
+            )
+            single_insert_times.append(time.time() - start_time)
+        
+        read_results['single_insert'] = {
+            'mean': statistics.mean(single_insert_times),
+            'median': statistics.median(single_insert_times),
+            'p95': np.percentile(single_insert_times, 95),
+            'p99': np.percentile(single_insert_times, 99),
+            'min': min(single_insert_times),
+            'max': max(single_insert_times),
+            'throughput': 1.0 / statistics.mean(single_insert_times)
+        }
+        
+        # 7. Batch Insert Performance (100 records)
+        print("\n7. Batch Insert Performance")
+        batch_insert_times = []
+        batch_size = 100
+        batch_iterations = max(1, iterations // 10)
+        
+        for _ in tqdm(range(batch_iterations), desc="Batch inserts"):
+            points = [self.generate_test_point(self.next_id + i) for i in range(batch_size)]
+            self.next_id += batch_size
+            
+            start_time = time.time()
+            self.qdrant_client.upsert(
+                collection_name=collection_name,
+                points=points
+            )
+            batch_insert_times.append(time.time() - start_time)
+        
+        read_results['batch_insert_100'] = {
+            'mean': statistics.mean(batch_insert_times),
+            'median': statistics.median(batch_insert_times),
+            'p95': np.percentile(batch_insert_times, 95),
+            'p99': np.percentile(batch_insert_times, 99),
+            'min': min(batch_insert_times),
+            'max': max(batch_insert_times),
+            'batch_size': batch_size,
+            'throughput': batch_size / statistics.mean(batch_insert_times)
+        }
+        
+        # 8. Update Performance
+        print("\n8. Update Performance")
+        update_times = []
+        for _ in tqdm(range(iterations), desc="Update operations"):
+            point_id = np.random.randint(0, self.next_id - 1) if self.next_id > 1 else 0
+            point = self.generate_test_point(point_id)
+            
+            start_time = time.time()
+            self.qdrant_client.upsert(
+                collection_name=collection_name,
+                points=[point]
+            )
+            update_times.append(time.time() - start_time)
+        
+        read_results['update'] = {
+            'mean': statistics.mean(update_times),
+            'median': statistics.median(update_times),
+            'p95': np.percentile(update_times, 95),
+            'p99': np.percentile(update_times, 99),
+            'min': min(update_times),
+            'max': max(update_times),
+            'throughput': 1.0 / statistics.mean(update_times)
+        }
+        
+        # 9. Delete Performance
+        print("\n9. Delete Performance")
+        delete_times = []
+        try:
+            collection_info = self.qdrant_client.get_collection(collection_name)
+            point_ids_to_delete = [np.random.randint(0, collection_info.points_count - 1) for _ in range(min(iterations, 100))]
+        except:
+            point_ids_to_delete = list(range(min(iterations, 100)))
+        
+        for point_id in tqdm(point_ids_to_delete, desc="Delete operations"):
+            start_time = time.time()
+            self.qdrant_client.delete(
+                collection_name=collection_name,
+                points_selector=[point_id]
+            )
+            delete_times.append(time.time() - start_time)
+        
+        read_results['delete'] = {
+            'mean': statistics.mean(delete_times),
+            'median': statistics.median(delete_times),
+            'p95': np.percentile(delete_times, 95),
+            'p99': np.percentile(delete_times, 99),
+            'min': min(delete_times),
+            'max': max(delete_times),
+            'throughput': 1.0 / statistics.mean(delete_times)
         }
         
         return read_results
@@ -755,11 +834,10 @@ class ComprehensiveBenchmarkSuite:
         
         # Run Qdrant benchmark with reduced iterations
         try:
-            qdrant_read = self.run_read_benchmark(qdrant_collection, comparison_iterations)
-            qdrant_write = self.run_write_benchmark(qdrant_collection, comparison_iterations, cleanup=False)
+            qdrant_benchmark = self.run_read_benchmark(qdrant_collection, comparison_iterations)
         except Exception as e:
             print(f"❌ Qdrant benchmark failed: {e}")
-            qdrant_read = qdrant_write = None
+            qdrant_benchmark = None
         
         # Run PostgreSQL benchmark with reduced iterations
         try:
@@ -768,21 +846,20 @@ class ComprehensiveBenchmarkSuite:
             print(f"❌ PostgreSQL benchmark failed: {e}")
             postgres_results = None
         
-        if not any([qdrant_read, postgres_results]):
+        if not any([qdrant_benchmark, postgres_results]):
             print("Error: Could not complete database comparison - all benchmarks failed")
             return None
         
         # Calculate performance ratios
         comparison_results = {
-            'qdrant_read': qdrant_read,
-            'qdrant_write': qdrant_write,
+            'qdrant_benchmark': qdrant_benchmark,
             'postgres': postgres_results,
             'ratios': {}
         }
         
         # Search comparison
-        if qdrant_read and 'single_search' in qdrant_read and postgres_results and 'single_search' in postgres_results:
-            qdrant_qps = qdrant_read['single_search']['qps']
+        if qdrant_benchmark and 'single_search' in qdrant_benchmark and postgres_results and 'single_search' in postgres_results:
+            qdrant_qps = qdrant_benchmark['single_search']['qps']
             postgres_qps = postgres_results['single_search']['qps']
             if postgres_qps > 0:
                 comparison_results['ratios']['search_qps'] = {
@@ -792,8 +869,8 @@ class ComprehensiveBenchmarkSuite:
                 }
         
         # Insert comparison
-        if qdrant_write and 'single_insert' in qdrant_write and postgres_results and 'single_insert' in postgres_results:
-            qdrant_throughput = qdrant_write['single_insert']['throughput']
+        if qdrant_benchmark and 'single_insert' in qdrant_benchmark and postgres_results and 'single_insert' in postgres_results:
+            qdrant_throughput = qdrant_benchmark['single_insert']['throughput']
             postgres_throughput = postgres_results['single_insert']['throughput']
             if postgres_throughput > 0:
                 comparison_results['ratios']['insert_throughput'] = {
@@ -1755,8 +1832,7 @@ class ComprehensiveBenchmarkSuite:
                 "databases_tested": ["Weaviate", "Qdrant", "Milvus", "TimescaleDB", "PostgreSQL"]
             },
             "weaviate_benchmark": None,
-            "read_benchmark": None,
-            "write_benchmark": None,
+            "qdrant_benchmark": None,
             "milvus_benchmark": None,
             "postgres_ts_benchmark": None,
             "postgres_benchmark": None,
@@ -1774,20 +1850,12 @@ class ComprehensiveBenchmarkSuite:
                 print("="*60)
                 results["weaviate_benchmark"] = self.run_weaviate_benchmark("TestVectors", iterations)
             
-            # 2. Run Qdrant benchmarks (read and write)
-            if run_read:
+            # 2. Run Qdrant benchmark (unified read and write)
+            if run_read or run_write:
                 print("\n" + "="*60)
-                print("RUNNING QDRANT READ BENCHMARK (2/5)")
+                print("RUNNING QDRANT BENCHMARK (2/5)")
                 print("="*60)
-                results["read_benchmark"] = self.run_read_benchmark(read_collection, iterations)
-            
-            if run_write:
-                print("\n" + "="*60)
-                print("RUNNING QDRANT WRITE BENCHMARK (2/5)")
-                print("="*60)
-                # Don't cleanup if using the same collection as read benchmark
-                cleanup_write = (write_collection != read_collection)
-                results["write_benchmark"] = self.run_write_benchmark(write_collection, iterations, cleanup=cleanup_write)
+                results["qdrant_benchmark"] = self.run_read_benchmark(read_collection, iterations)
             
             # 3. Run Milvus benchmark
             if run_milvus:
@@ -1843,20 +1911,17 @@ class ComprehensiveBenchmarkSuite:
         print("BENCHMARK SUMMARY")
         print("="*80)
         
-        if results["read_benchmark"]:
-            print("\nREAD PERFORMANCE:")
-            read_results = results["read_benchmark"]
-            for operation, stats in read_results.items():
-                print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['qps']:.2f} QPS")
-        
-        if results["write_benchmark"]:
-            print("\nWRITE PERFORMANCE:")
-            write_results = results["write_benchmark"]
-            for operation, stats in write_results.items():
-                if 'batch_size' in stats:
-                    print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} points/sec")
-                else:
-                    print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} ops/sec")
+        if results.get("qdrant_benchmark"):
+            print("\nQDRANT PERFORMANCE:")
+            qdrant_results = results["qdrant_benchmark"]
+            for operation, stats in qdrant_results.items():
+                if 'qps' in stats:
+                    print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['qps']:.2f} QPS")
+                elif 'throughput' in stats:
+                    if 'batch_size' in stats:
+                        print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} points/sec")
+                    else:
+                        print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} ops/sec")
         
         if results["postgres_benchmark"]:
             print("\nPOSTGRESQL PERFORMANCE:")
@@ -1914,15 +1979,14 @@ class ComprehensiveBenchmarkSuite:
         print("="*80)
         
         # Extract performance data from all databases
-        qdrant_read = results.get("read_benchmark", {})
-        qdrant_write = results.get("write_benchmark", {})
+        qdrant_benchmark = results.get("qdrant_benchmark", {})
         postgres = results.get("postgres_benchmark", {})
         milvus = results.get("milvus_benchmark", {})
         weaviate = results.get("weaviate_benchmark", {})
         
         # Check if we have at least some data
         databases_with_data = []
-        if qdrant_read:
+        if qdrant_benchmark:
             databases_with_data.append("Qdrant")
         if postgres:
             databases_with_data.append("PostgreSQL")
@@ -1942,11 +2006,11 @@ class ComprehensiveBenchmarkSuite:
         search_data = []
         
         # Qdrant search data
-        if qdrant_read and "single_search" in qdrant_read:
+        if qdrant_benchmark and "single_search" in qdrant_benchmark:
             search_data.append({
                 "name": "Qdrant",
-                "qps": qdrant_read["single_search"]["qps"],
-                "mean_time": qdrant_read["single_search"]["mean"],
+                "qps": qdrant_benchmark["single_search"]["qps"],
+                "mean_time": qdrant_benchmark["single_search"]["mean"],
                 "type": "Vector DB"
             })
         
@@ -2002,16 +2066,16 @@ class ComprehensiveBenchmarkSuite:
                 print(f"\n  🏆 {fastest['name']} is {fastest['qps']/search_data[-1]['qps']:.1f}x faster than {search_data[-1]['name']}")
         
         # Additional Qdrant-specific features
-        if qdrant_read:
+        if qdrant_benchmark:
             print(f"\nQdrant Advanced Features:")
-            if "batch_search" in qdrant_read:
-                print(f"  • Batch Search (10 vectors): {qdrant_read['batch_search']['qps']:.1f} QPS")
-            if "filtered_search" in qdrant_read:
-                print(f"  • Filtered Search: {qdrant_read['filtered_search']['qps']:.1f} QPS")
-            if "retrieve_by_id" in qdrant_read:
-                print(f"  • ID Retrieval: {qdrant_read['retrieve_by_id']['qps']:.1f} QPS")
-            if "concurrent_search" in qdrant_read:
-                print(f"  • Concurrent Search: {qdrant_read['concurrent_search']['qps']:.1f} QPS")
+            if "batch_search" in qdrant_benchmark:
+                print(f"  • Batch Search: {qdrant_benchmark['batch_search']['qps']:.1f} QPS")
+            if "filtered_search" in qdrant_benchmark:
+                print(f"  • Filtered Search: {qdrant_benchmark['filtered_search']['qps']:.1f} QPS")
+            if "retrieve_by_id" in qdrant_benchmark:
+                print(f"  • ID Retrieval: {qdrant_benchmark['retrieve_by_id']['qps']:.1f} QPS")
+            if "concurrent_search" in qdrant_benchmark:
+                print(f"  • Concurrent Search: {qdrant_benchmark['concurrent_search']['qps']:.1f} QPS")
         
         print("\n✏️  WRITE PERFORMANCE COMPARISON:")
         print("-" * 50)
@@ -2020,11 +2084,11 @@ class ComprehensiveBenchmarkSuite:
         write_data = []
         
         # Qdrant write data
-        if qdrant_write and "single_insert" in qdrant_write:
+        if qdrant_benchmark and "single_insert" in qdrant_benchmark:
             write_data.append({
                 "name": "Qdrant",
-                "ops_per_sec": qdrant_write["single_insert"]["throughput"],
-                "mean_time": qdrant_write["single_insert"]["mean"],
+                "ops_per_sec": qdrant_benchmark["single_insert"]["throughput"],
+                "mean_time": qdrant_benchmark["single_insert"]["mean"],
                 "type": "Vector DB"
             })
         
@@ -2080,18 +2144,14 @@ class ComprehensiveBenchmarkSuite:
                 print(f"\n  🏆 {fastest['name']} is {fastest['ops_per_sec']/write_data[-1]['ops_per_sec']:.1f}x faster than {write_data[-1]['name']}")
         
         # Additional Qdrant-specific write features
-        if qdrant_write:
+        if qdrant_benchmark:
             print(f"\nQdrant Advanced Write Features:")
-            if "batch_insert_10" in qdrant_write:
-                print(f"  • Batch Insert (10 points): {qdrant_write['batch_insert_10']['throughput']:.1f} points/sec")
-            if "batch_insert_100" in qdrant_write:
-                print(f"  • Batch Insert (100 points): {qdrant_write['batch_insert_100']['throughput']:.1f} points/sec")
-            if "batch_insert_1000" in qdrant_write:
-                print(f"  • Batch Insert (1000 points): {qdrant_write['batch_insert_1000']['throughput']:.1f} points/sec")
-            if "update" in qdrant_write:
-                print(f"  • Update Operations: {qdrant_write['update']['throughput']:.1f} ops/sec")
-        if "delete" in qdrant_write:
-                print(f"  • Delete Operations: {qdrant_write['delete']['throughput']:.1f} ops/sec")
+            if "batch_insert_100" in qdrant_benchmark:
+                print(f"  • Batch Insert (100 points): {qdrant_benchmark['batch_insert_100']['throughput']:.1f} points/sec")
+            if "update" in qdrant_benchmark:
+                print(f"  • Update Operations: {qdrant_benchmark['update']['throughput']:.1f} ops/sec")
+            if "delete" in qdrant_benchmark:
+                print(f"  • Delete Operations: {qdrant_benchmark['delete']['throughput']:.1f} ops/sec")
         
         print("\n📊 OVERALL PERFORMANCE INSIGHTS:")
         print("-" * 50)
@@ -2116,14 +2176,10 @@ class ComprehensiveBenchmarkSuite:
             print(f"🏆 Write Performance Winner: {fastest_write['name']} ({fastest_write['ops_per_sec']:.1f} ops/sec)")
         
         # Additional insights
-        if qdrant_read:
-            if "concurrent_search" in qdrant_read:
-                concurrent_qps = qdrant_read["concurrent_search"]["qps"]
+        if qdrant_benchmark:
+            if "concurrent_search" in qdrant_benchmark:
+                concurrent_qps = qdrant_benchmark["concurrent_search"]["qps"]
                 print(f"\n• Qdrant Concurrent Search: {concurrent_qps:.1f} QPS under load")
-            
-            if "scroll" in qdrant_read:
-                scroll_qps = qdrant_read["scroll"]["qps"]
-                print(f"• Qdrant Large Dataset Scrolling: {scroll_qps:.1f} QPS for bulk operations")
         
         # Memory and CPU insights
         if results.get("load_test"):
@@ -2209,8 +2265,7 @@ class ComprehensiveBenchmarkSuite:
         print("="*120)
         
         # Extract performance data from all databases
-        qdrant_read = results.get("read_benchmark", {})
-        qdrant_write = results.get("write_benchmark", {})
+        qdrant_benchmark = results.get("qdrant_benchmark", {})
         postgres = results.get("postgres_benchmark", {})
         postgres_ts = results.get("postgres_ts_benchmark", {})
         milvus = results.get("milvus_benchmark", {})
@@ -2220,19 +2275,19 @@ class ComprehensiveBenchmarkSuite:
         table_data = []
         
         # Qdrant data
-        if qdrant_read and qdrant_write:
+        if qdrant_benchmark:
             table_data.append({
                 "Database": "Qdrant",
                 "Type": "Vector DB",
-                "Search QPS": f"{round(qdrant_read.get('single_search', {}).get('qps', 0))}",
-                "Batch Search QPS": f"{round(qdrant_read.get('batch_search', {}).get('qps', 0))}",
-                "Filtered Search QPS": f"{round(qdrant_read.get('filtered_search', {}).get('qps', 0))}",
-                "ID Retrieval QPS": f"{round(qdrant_read.get('retrieve_by_id', {}).get('qps', 0))}",
-                "Concurrent Search QPS": f"{round(qdrant_read.get('concurrent_search', {}).get('qps', 0))}",
-                "Single Insert ops/sec": f"{round(qdrant_write.get('single_insert', {}).get('throughput', 0))}",
-                "Batch Insert (100) ops/sec": f"{round(qdrant_write.get('batch_insert_100', {}).get('throughput', 0))}",
-                "Update ops/sec": f"{round(qdrant_write.get('update', {}).get('throughput', 0))}",
-                "Delete ops/sec": f"{round(qdrant_write.get('delete', {}).get('throughput', 0))}"
+                "Search QPS": f"{round(qdrant_benchmark.get('single_search', {}).get('qps', 0))}",
+                "Batch Search QPS": f"{round(qdrant_benchmark.get('batch_search', {}).get('qps', 0))}",
+                "Filtered Search QPS": f"{round(qdrant_benchmark.get('filtered_search', {}).get('qps', 0))}",
+                "ID Retrieval QPS": f"{round(qdrant_benchmark.get('retrieve_by_id', {}).get('qps', 0))}",
+                "Concurrent Search QPS": f"{round(qdrant_benchmark.get('concurrent_search', {}).get('qps', 0))}",
+                "Single Insert ops/sec": f"{round(qdrant_benchmark.get('single_insert', {}).get('throughput', 0))}",
+                "Batch Insert (100) ops/sec": f"{round(qdrant_benchmark.get('batch_insert_100', {}).get('throughput', 0))}",
+                "Update ops/sec": f"{round(qdrant_benchmark.get('update', {}).get('throughput', 0))}",
+                "Delete ops/sec": f"{round(qdrant_benchmark.get('delete', {}).get('throughput', 0))}"
             })
         
         # PostgreSQL data
