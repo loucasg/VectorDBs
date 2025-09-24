@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, SearchRequest
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, SearchRequest, QueryRequest
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from tqdm import tqdm
@@ -168,9 +168,9 @@ class ComprehensiveBenchmarkSuite:
         for _ in tqdm(range(iterations), desc="Single searches"):
             query_vector = self.generate_query_vector()
             start_time = time.time()
-            self.qdrant_client.search(
+            self.qdrant_client.query_points(
                 collection_name=collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=10
             )
             single_search_times.append(time.time() - start_time)
@@ -192,9 +192,9 @@ class ComprehensiveBenchmarkSuite:
         for _ in tqdm(range(batch_iterations), desc="Batch searches"):
             query_vectors = [self.generate_query_vector() for _ in range(5)]  # Reduced from 10 to 5
             start_time = time.time()
-            self.qdrant_client.search_batch(
+            self.qdrant_client.query_batch_points(
                 collection_name=collection_name,
-                requests=[SearchRequest(vector=v, limit=10) for v in query_vectors]
+                requests=[QueryRequest(query=v, limit=10) for v in query_vectors]
             )
             batch_search_times.append(time.time() - start_time)
         
@@ -217,9 +217,9 @@ class ComprehensiveBenchmarkSuite:
             random_category = np.random.choice(categories)
             
             start_time = time.time()
-            self.qdrant_client.search(
+            self.qdrant_client.query_points(
                 collection_name=collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=Filter(
                     must=[FieldCondition(
                         key="metadata.category",
@@ -291,9 +291,9 @@ class ComprehensiveBenchmarkSuite:
         def single_search():
             query_vector = self.generate_query_vector()
             start_time = time.time()
-            self.qdrant_client.search(
+            self.qdrant_client.query_points(
                 collection_name=collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=10
             )
             return time.time() - start_time
@@ -815,9 +815,9 @@ class ComprehensiveBenchmarkSuite:
             while not stop_event.is_set():
                 try:
                     query_vector = self.generate_query_vector()
-                    self.qdrant_client.search(
+                    self.qdrant_client.query_points(
                         collection_name=collection_name,
-                        query_vector=query_vector,
+                        query=query_vector,
                         limit=10
                     )
                 except Exception as e:
@@ -1772,7 +1772,7 @@ class ComprehensiveBenchmarkSuite:
             # Run database comparison
             if run_comparison:
                 try:
-                results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
+                    results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
                 except Exception as e:
                     print(f"❌ Database comparison failed: {e}")
                     results["database_comparison"] = {"error": str(e)}
@@ -1965,7 +1965,7 @@ class ComprehensiveBenchmarkSuite:
                 print(f"  • Batch Search (10 vectors): {qdrant_read['batch_search']['qps']:.1f} QPS")
             if "filtered_search" in qdrant_read:
                 print(f"  • Filtered Search: {qdrant_read['filtered_search']['qps']:.1f} QPS")
-        if "retrieve_by_id" in qdrant_read:
+            if "retrieve_by_id" in qdrant_read:
                 print(f"  • ID Retrieval: {qdrant_read['retrieve_by_id']['qps']:.1f} QPS")
             if "concurrent_search" in qdrant_read:
                 print(f"  • Concurrent Search: {qdrant_read['concurrent_search']['qps']:.1f} QPS")
@@ -2064,12 +2064,12 @@ class ComprehensiveBenchmarkSuite:
         
         # Additional insights
         if qdrant_read:
-        if "concurrent_search" in qdrant_read:
-            concurrent_qps = qdrant_read["concurrent_search"]["qps"]
+            if "concurrent_search" in qdrant_read:
+                concurrent_qps = qdrant_read["concurrent_search"]["qps"]
                 print(f"\n• Qdrant Concurrent Search: {concurrent_qps:.1f} QPS under load")
-        
-        if "scroll" in qdrant_read:
-            scroll_qps = qdrant_read["scroll"]["qps"]
+            
+            if "scroll" in qdrant_read:
+                scroll_qps = qdrant_read["scroll"]["qps"]
                 print(f"• Qdrant Large Dataset Scrolling: {scroll_qps:.1f} QPS for bulk operations")
         
         # Memory and CPU insights
