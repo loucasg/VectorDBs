@@ -178,7 +178,14 @@ class TimescaleDBPopulator:
     
     def populate(self, num_records=100000, batch_size=1000):
         """Populate the database with vector embeddings"""
-        print(f"🚀 Starting TimescaleDB + pgvectorscale population with {num_records:,} records...")
+        print(f"\n{'='*50}")
+        print(f"POPULATING TIMESCALEDB DATABASE")
+        print(f"{'='*50}")
+        print(f"Database: {self.connection_config['dbname']}")
+        print(f"Records to insert: {num_records:,}")
+        print(f"Vector dimension: {self.vector_dim}")
+        print(f"Batch size: {batch_size}")
+        print(f"Extension: pgvectorscale + DiskANN")
         
         if not self.connect():
             return False
@@ -238,18 +245,27 @@ class TimescaleDBPopulator:
         end_time = time.time()
         duration = end_time - start_time
         
-        print(f"\n✅ TimescaleDB + pgvectorscale population completed!")
-        print(f"📊 Records inserted: {total_inserted:,}")
-        print(f"⏱️  Duration: {duration:.2f} seconds")
-        print(f"🚀 Insert rate: {total_inserted/duration:.0f} records/second")
+        print(f"\n{'='*50}")
+        print(f"POPULATION COMPLETED")
+        print(f"{'='*50}")
+        print(f"Records inserted: {total_inserted:,}")
+        print(f"Duration: {duration:.2f} seconds")
+        print(f"Records per second: {total_inserted/duration:.0f}")
         
         # Verify final count and get updated stats
         final_count = self.get_count()
-        print(f"📈 Total records in TimescaleDB: {final_count:,}")
+        print(f"Total records in TimescaleDB: {final_count:,}")
         
         # Get final collection stats
-        print("\n📊 Final collection state:")
-        self.get_collection_stats()
+        print(f"\n{'='*50}")
+        print(f"COLLECTION STATISTICS")
+        print(f"{'='*50}")
+        print(f"Database: {self.connection_config['dbname']}")
+        print(f"Total points: {final_count:,}")
+        print(f"Vector dimensions: {self.vector_dim}")
+        print(f"Extension: pgvectorscale + DiskANN")
+        print(f"Index type: DiskANN")
+        print(f"Distance metric: COSINE")
         
         # Get DiskANN index stats
         print("\n📊 DiskANN Index Statistics:")

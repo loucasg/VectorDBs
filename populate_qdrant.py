@@ -20,10 +20,24 @@ import argparse
 
 class VectorDatabasePopulator:
     def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "test_vectors"):
-        self.client = QdrantClient(host=host, port=port)
+        self.host = host
+        self.port = port
         self.collection_name = collection_name
         self.vector_dim = 1024  # Common embedding dimension (e.g., BERT, sentence-transformers)
         self.batch_size = 1000  # Batch size for efficient insertion
+        self.client = None
+        
+    def connect(self):
+        """Connect to Qdrant server"""
+        try:
+            self.client = QdrantClient(host=self.host, port=self.port)
+            # Test connection
+            collections = self.client.get_collections()
+            print(f"✅ Connected to Qdrant at {self.host}:{self.port}")
+            return True
+        except Exception as e:
+            print(f"❌ Error connecting to Qdrant: {e}")
+            return False
         
     def create_collection(self):
         """Create the collection if it doesn't exist"""
@@ -120,7 +134,11 @@ class VectorDatabasePopulator:
 
     def populate_database(self, total_records: int = 10_000_000, max_workers: int = 4):
         """Populate the database with the specified number of records"""
-        print(f"Starting population of {total_records:,} records...")
+        print(f"\n{'='*50}")
+        print(f"POPULATING QDRANT DATABASE")
+        print(f"{'='*50}")
+        print(f"Collection: {self.collection_name}")
+        print(f"Records to insert: {total_records:,}")
         print(f"Vector dimension: {self.vector_dim}")
         print(f"Batch size: {self.batch_size}")
         print(f"Max workers: {max_workers}")
@@ -141,9 +159,11 @@ class VectorDatabasePopulator:
         
         successful_batches = 0
         failed_batches = 0
+        total_inserted = 0
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
+            batch_sizes = {}  # Track batch sizes for each future
             
             for batch_idx in range(total_batches):
                 batch_start_id = start_id + (batch_idx * self.batch_size)
@@ -155,30 +175,36 @@ class VectorDatabasePopulator:
                 # Submit batch for insertion
                 future = executor.submit(self.insert_batch, points)
                 futures.append(future)
+                batch_sizes[future] = current_batch_size
                 
                 # Process completed futures
                 if len(futures) >= max_workers * 2:  # Keep some futures in flight
                     completed_futures = []
                     for future in futures:
                         if future.done():
+                            batch_size = batch_sizes[future]
                             if future.result():
                                 successful_batches += 1
+                                total_inserted += batch_size
                             else:
                                 failed_batches += 1
                             completed_futures.append(future)
+                            pbar.update(batch_size)
                     
                     # Remove completed futures
                     for future in completed_futures:
                         futures.remove(future)
-                        pbar.update(self.batch_size)
+                        del batch_sizes[future]
             
             # Wait for remaining futures
             for future in futures:
+                batch_size = batch_sizes[future]
                 if future.result():
                     successful_batches += 1
+                    total_inserted += batch_size
                 else:
                     failed_batches += 1
-                pbar.update(self.batch_size)
+                pbar.update(batch_size)
         
         pbar.close()
         
@@ -189,24 +215,33 @@ class VectorDatabasePopulator:
         final_memory = process.memory_info().rss / 1024 / 1024  # MB
         memory_used = final_memory - initial_memory
         
+        # Get final collection count
+        try:
+            collection_info = self.client.get_collection(self.collection_name)
+            final_count = collection_info.points_count
+        except Exception as e:
+            print(f"Error getting collection info: {e}")
+            final_count = total_inserted
+        
         # Print statistics
-        print("\n" + "="*50)
-        print("POPULATION COMPLETED")
-        print("="*50)
-        print(f"Total records: {total_records:,}")
+        print(f"\n{'='*50}")
+        print(f"POPULATION COMPLETED")
+        print(f"{'='*50}")
+        print(f"Records inserted: {total_inserted:,}")
         print(f"Successful batches: {successful_batches:,}")
         print(f"Failed batches: {failed_batches:,}")
         print(f"Duration: {duration:.2f} seconds")
-        print(f"Records per second: {total_records / duration:,.0f}")
+        print(f"Records per second: {total_inserted / duration:,.0f}")
         print(f"Memory used: {memory_used:.2f} MB")
         print(f"Peak memory: {final_memory:.2f} MB")
         
-        # Verify collection info
-        try:
-            collection_info = self.client.get_collection(self.collection_name)
-            print(f"Collection points count: {collection_info.points_count:,}")
-        except Exception as e:
-            print(f"Error getting collection info: {e}")
+        print(f"\n{'='*50}")
+        print(f"COLLECTION STATISTICS")
+        print(f"{'='*50}")
+        print(f"Collection name: {self.collection_name}")
+        print(f"Total points: {final_count:,}")
+        print(f"Vector dimension: {self.vector_dim}")
+        print(f"Distance metric: COSINE")
 
     def get_collection_stats(self):
         """Get and display collection statistics"""
@@ -244,6 +279,10 @@ def main():
     populator.vector_dim = args.vector_dim
     
     try:
+        # Connect to Qdrant
+        if not populator.connect():
+            return 1
+        
         # Create collection
         populator.create_collection()
         
@@ -256,11 +295,22 @@ def main():
         # Show final stats
         populator.get_collection_stats()
         
+        print(f"\n✅ Successfully populated Qdrant collection '{args.collection}' with {args.records:,} records")
+        return 0
+        
     except KeyboardInterrupt:
-        print("\nPopulation interrupted by user")
+        print(f"\n⚠️  Population interrupted by user")
+        return 1
     except Exception as e:
-        print(f"Error during population: {e}")
-        raise
+        print(f"\n❌ Error during population: {e}")
+        return 1
+    finally:
+        # Close connection if it exists
+        if populator.client:
+            try:
+                populator.client.close()
+            except:
+                pass
 
 
 if __name__ == "__main__":

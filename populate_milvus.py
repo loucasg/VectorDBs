@@ -11,10 +11,16 @@ import argparse
 import time
 import numpy as np
 import psutil
+import os
+import warnings
 from tqdm import tqdm
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Suppress gRPC warnings
+os.environ['GRPC_VERBOSITY'] = 'ERROR'
+warnings.filterwarnings('ignore', category=UserWarning, module='grpc')
 
 
 class MilvusPopulator:
@@ -31,10 +37,15 @@ class MilvusPopulator:
     def connect(self):
         """Connect to Milvus server"""
         try:
+            # Check if connection already exists
+            if connections.has_connection(self.connection_alias):
+                connections.disconnect(self.connection_alias)
+            
             connections.connect(
                 alias=self.connection_alias,
                 host=self.host,
-                port=self.port
+                port=self.port,
+                timeout=30  # Add timeout
             )
             print(f"✅ Connected to Milvus at {self.host}:{self.port}")
             return True
@@ -58,6 +69,17 @@ class MilvusPopulator:
                         if existing_dim and existing_dim != self.vector_dim:
                             print(f"⚠️  Warning: Collection has vector dimension {existing_dim}, but script is using {self.vector_dim}")
                         break
+                
+                # Check if collection has an index
+                if not collection.has_index():
+                    print("⚠️  Collection has no index, creating one...")
+                    index_params = {
+                        "metric_type": "COSINE",
+                        "index_type": "IVF_FLAT",
+                        "params": {"nlist": 1024}
+                    }
+                    collection.create_index("vector", index_params)
+                    print("✅ Index created successfully")
                 
                 return collection
             else:
@@ -95,21 +117,9 @@ class MilvusPopulator:
         try:
             collection = Collection(self.collection_name, using=self.connection_alias)
             if not collection.is_empty:
-                # Get the last inserted ID by querying the collection
-                # Since we use auto_id=True, we need to get the max ID
-                results = collection.query(
-                    expr="id >= 0",
-                    output_fields=["id"],
-                    limit=1,
-                    offset=0
-                )
-                if results:
-                    # Get the count to estimate next ID
-                    stats = collection.get_stats()
-                    # For auto_id, we can't predict the next ID, so we'll let Milvus handle it
-                    return 0  # Milvus will auto-generate IDs
-                else:
-                    return 0
+                # Since we use auto_id=True, Milvus handles ID generation automatically
+                # We can't predict the next ID, so we'll let Milvus handle it
+                return 0  # Milvus will auto-generate IDs
             else:
                 return 0
         except Exception as e:
@@ -151,7 +161,7 @@ class MilvusPopulator:
             ]
             
             # Insert data
-            collection.insert(data)
+            insert_result = collection.insert(data)
             collection.flush()  # Ensure data is written to disk
             
             return True, len(vectors)
@@ -220,11 +230,13 @@ class MilvusPopulator:
         # Get final collection stats
         try:
             collection = Collection(self.collection_name, using=self.connection_alias)
-            collection.load()  # Load collection into memory for querying
-            stats = collection.get_stats()
+            # Load collection into memory for querying
+            collection.load()
+            # Use num_entities instead of get_stats() which is deprecated
             entity_count = collection.num_entities
+            print(f"✅ Collection loaded successfully with {entity_count:,} entities")
         except Exception as e:
-            print(f"Warning: Could not get collection stats: {e}")
+            print(f"⚠️  Warning: Could not get collection stats: {e}")
             entity_count = total_inserted
         
         print(f"\n{'='*50}")

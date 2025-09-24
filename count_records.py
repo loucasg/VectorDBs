@@ -478,64 +478,116 @@ class RecordCounter:
                 diff = max_count - min_count
                 print(f"  📈 {max_db} has {diff:,} more records than {min_db}")
     
-    def run_count(self, collection_name="test_vectors", show_all_collections=False, include_all_databases=True, qdrant_only=False):
+    def run_count(self, collection_name="test_vectors", show_all_collections=False,
+                  qdrant_only=False, postgres_only=False, timescale_only=False,
+                  milvus_only=False, weaviate_only=False):
         """Run the record counting process"""
         print(f"Counting records in '{collection_name}' collection...")
-        
-        # Count specific collection
-        qdrant_result = self.count_qdrant_records(collection_name)
-        postgres_result = self.count_postgres_records()
-        postgres_ts_result = self.count_postgres_ts_records()
-        
-        # Count other databases based on flags
+
+        # Initialize all results as None
+        qdrant_result = None
+        postgres_result = None
+        postgres_ts_result = None
         milvus_result = None
         weaviate_result = None
-        
-        if include_all_databases and not qdrant_only:
+
+        # Count based on selected options
+        if not any([qdrant_only, postgres_only, timescale_only, milvus_only, weaviate_only]):
+            # Default: count all databases
             print("Counting records in all databases...")
+            qdrant_result = self.count_qdrant_records(collection_name)
+            postgres_result = self.count_postgres_records()
+            postgres_ts_result = self.count_postgres_ts_records()
             milvus_result = self.count_milvus_records(collection_name)
             weaviate_result = self.count_weaviate_records("TestVectors")
-        elif qdrant_only:
-            print("Counting records in Qdrant and PostgreSQL only...")
-        
-        # Count all collections if requested
+        else:
+            # Count only selected databases
+            if qdrant_only:
+                print("Counting records in Qdrant only...")
+                qdrant_result = self.count_qdrant_records(collection_name)
+            if postgres_only:
+                print("Counting records in PostgreSQL only...")
+                postgres_result = self.count_postgres_records()
+            if timescale_only:
+                print("Counting records in TimescaleDB only...")
+                postgres_ts_result = self.count_postgres_ts_records()
+            if milvus_only:
+                print("Counting records in Milvus only...")
+                milvus_result = self.count_milvus_records(collection_name)
+            if weaviate_only:
+                print("Counting records in Weaviate only...")
+                weaviate_result = self.count_weaviate_records("TestVectors")
+
+        # Count all collections if requested (only for Qdrant)
         all_collections = None
-        if show_all_collections:
+        if show_all_collections and (qdrant_result is not None or not any([postgres_only, timescale_only, milvus_only, weaviate_only])):
             all_collections = self.count_all_collections()
-        
+
         # Print summary
         self.print_summary(qdrant_result, postgres_result, postgres_ts_result, milvus_result, weaviate_result, all_collections)
-        
+
         return {
             "qdrant": qdrant_result,
             "postgres": postgres_result,
             "postgres_ts": postgres_ts_result,
+            "milvus": milvus_result,
+            "weaviate": weaviate_result,
             "all_collections": all_collections
         }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Count records in vector databases")
-    parser.add_argument("--collection", default="test_vectors", help="Collection name to count")
+    parser = argparse.ArgumentParser(
+        description="Count records in vector databases",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python count_records.py                          # Count all databases (default)
+  python count_records.py --qdrant-only            # Count only Qdrant
+  python count_records.py --postgres-only          # Count only PostgreSQL
+  python count_records.py --timescale-only         # Count only TimescaleDB
+  python count_records.py --milvus-only            # Count only Milvus
+  python count_records.py --weaviate-only          # Count only Weaviate
+  python count_records.py --collection my_vectors  # Specify collection name
+  python count_records.py --all-collections        # Show all Qdrant collections
+        """
+    )
+
+    # Collection and display options
+    parser.add_argument("--collection", default="test_vectors", help="Collection/table name to count (default: test_vectors)")
     parser.add_argument("--all-collections", action="store_true", help="Show counts for all Qdrant collections")
-    parser.add_argument("--all-databases", action="store_true", default=True, help="Count records in all databases (Qdrant, PostgreSQL, Milvus, Weaviate) - this is the default behavior")
-    parser.add_argument("--qdrant-only", action="store_true", help="Count records only in Qdrant and PostgreSQL (skip Milvus and Weaviate)")
-    
+
+    # Database selection options (mutually exclusive with all-databases)
+    db_group = parser.add_mutually_exclusive_group()
+    db_group.add_argument("--qdrant-only", action="store_true", help="Count records only in Qdrant")
+    db_group.add_argument("--postgres-only", action="store_true", help="Count records only in PostgreSQL")
+    db_group.add_argument("--timescale-only", action="store_true", help="Count records only in TimescaleDB")
+    db_group.add_argument("--milvus-only", action="store_true", help="Count records only in Milvus")
+    db_group.add_argument("--weaviate-only", action="store_true", help="Count records only in Weaviate")
+
+    # Legacy options for backwards compatibility
+    parser.add_argument("--all-databases", action="store_true", help="Count records in all databases (this is the default behavior)")
+
     # Database connection arguments
-    parser.add_argument("--qdrant-host", default="localhost", help="Qdrant host")
-    parser.add_argument("--qdrant-port", type=int, default=6333, help="Qdrant port")
-    parser.add_argument("--postgres-host", default="localhost", help="PostgreSQL host")
-    parser.add_argument("--postgres-port", type=int, default=5432, help="PostgreSQL port")
-    parser.add_argument("--postgres-user", default="postgres", help="PostgreSQL user")
-    parser.add_argument("--postgres-password", default="postgres", help="PostgreSQL password")
-    parser.add_argument("--postgres-db", default="vectordb", help="PostgreSQL database")
-    parser.add_argument("--milvus-host", default="localhost", help="Milvus host")
-    parser.add_argument("--milvus-port", type=int, default=19530, help="Milvus port")
-    parser.add_argument("--weaviate-host", default="localhost", help="Weaviate host")
-    parser.add_argument("--weaviate-port", type=int, default=8080, help="Weaviate port")
-    
+    parser.add_argument("--qdrant-host", default="localhost", help="Qdrant host (default: localhost)")
+    parser.add_argument("--qdrant-port", type=int, default=6333, help="Qdrant port (default: 6333)")
+    parser.add_argument("--postgres-host", default="localhost", help="PostgreSQL host (default: localhost)")
+    parser.add_argument("--postgres-port", type=int, default=5432, help="PostgreSQL port (default: 5432)")
+    parser.add_argument("--postgres-user", default="postgres", help="PostgreSQL user (default: postgres)")
+    parser.add_argument("--postgres-password", default="postgres", help="PostgreSQL password (default: postgres)")
+    parser.add_argument("--postgres-db", default="vectordb", help="PostgreSQL database (default: vectordb)")
+    parser.add_argument("--postgres-ts-host", default="localhost", help="TimescaleDB host (default: localhost)")
+    parser.add_argument("--postgres-ts-port", type=int, default=5433, help="TimescaleDB port (default: 5433)")
+    parser.add_argument("--postgres-ts-user", default="postgres", help="TimescaleDB user (default: postgres)")
+    parser.add_argument("--postgres-ts-password", default="postgres", help="TimescaleDB password (default: postgres)")
+    parser.add_argument("--postgres-ts-db", default="vectordb", help="TimescaleDB database (default: vectordb)")
+    parser.add_argument("--milvus-host", default="localhost", help="Milvus host (default: localhost)")
+    parser.add_argument("--milvus-port", type=int, default=19530, help="Milvus port (default: 19530)")
+    parser.add_argument("--weaviate-host", default="localhost", help="Weaviate host (default: localhost)")
+    parser.add_argument("--weaviate-port", type=int, default=8080, help="Weaviate port (default: 8080)")
+
     args = parser.parse_args()
-    
+
     counter = RecordCounter(
         qdrant_host=args.qdrant_host,
         qdrant_port=args.qdrant_port,
@@ -544,18 +596,26 @@ def main():
         postgres_user=args.postgres_user,
         postgres_password=args.postgres_password,
         postgres_db=args.postgres_db,
+        postgres_ts_host=args.postgres_ts_host,
+        postgres_ts_port=args.postgres_ts_port,
+        postgres_ts_user=args.postgres_ts_user,
+        postgres_ts_password=args.postgres_ts_password,
+        postgres_ts_db=args.postgres_ts_db,
         milvus_host=args.milvus_host,
         milvus_port=args.milvus_port,
         weaviate_host=args.weaviate_host,
         weaviate_port=args.weaviate_port,
     )
-    
+
     try:
         results = counter.run_count(
             collection_name=args.collection,
             show_all_collections=args.all_collections,
-            include_all_databases=args.all_databases,
-            qdrant_only=args.qdrant_only
+            qdrant_only=args.qdrant_only,
+            postgres_only=args.postgres_only,
+            timescale_only=args.timescale_only,
+            milvus_only=args.milvus_only,
+            weaviate_only=args.weaviate_only
         )
     except KeyboardInterrupt:
         print("\nCount interrupted by user")

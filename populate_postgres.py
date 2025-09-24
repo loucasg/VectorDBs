@@ -311,7 +311,11 @@ class PostgreSQLVectorPopulator:
 
     def populate_database(self, total_records: int = 10_000_000, max_workers: int = 4):
         """Populate the database with the specified number of records"""
-        print(f"Starting population of {total_records:,} records...")
+        print(f"\n{'='*50}")
+        print(f"POPULATING POSTGRESQL DATABASE")
+        print(f"{'='*50}")
+        print(f"Database: {self.database}")
+        print(f"Records to insert: {total_records:,}")
         print(f"Vector dimension: {self.vector_dim}")
         print(f"Batch size: {self.batch_size}")
         print(f"Max workers: {max_workers}")
@@ -407,9 +411,9 @@ class PostgreSQLVectorPopulator:
             conn.close()
         
         # Print statistics
-        print("\n" + "="*50)
-        print("POPULATION COMPLETED")
-        print("="*50)
+        print(f"\n{'='*50}")
+        print(f"POPULATION COMPLETED")
+        print(f"{'='*50}")
         print(f"Records added: {total_records:,}")
         print(f"Previous count: {current_count:,}")
         print(f"Final count: {final_count:,}")
@@ -445,14 +449,17 @@ class PostgreSQLVectorPopulator:
                 """)
                 metadata_stats = cur.fetchone()
                 
-                print("\n" + "="*50)
-                print("COLLECTION STATISTICS")
-                print("="*50)
+                print(f"\n{'='*50}")
+                print(f"COLLECTION STATISTICS")
+                print(f"{'='*50}")
+                print(f"Database: {self.database}")
                 print(f"Total points: {total_points:,}")
                 print(f"Vector dimensions: {vector_dim}")
                 print(f"Average metadata size: {metadata_stats['avg_metadata_size']:.1f} characters")
                 print(f"Earliest record: {metadata_stats['earliest_record']}")
                 print(f"Latest record: {metadata_stats['latest_record']}")
+                print(f"Index type: HNSW")
+                print(f"Distance metric: COSINE")
                 
         except Exception as e:
             print(f"Error getting collection stats: {e}")
