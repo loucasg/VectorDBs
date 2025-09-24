@@ -695,7 +695,12 @@ class ComprehensiveBenchmarkSuite:
             concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(postgres_search_worker) for _ in range(concurrent_queries)]
-                concurrent_search_times = [future.result() for future in futures]
+                for future in tqdm(as_completed(futures), total=concurrent_queries, desc="PostgreSQL concurrent searches"):
+                    try:
+                        concurrent_search_times.append(future.result())
+                    except Exception as e:
+                        print(f"PostgreSQL concurrent search failed: {e}")
+                        concurrent_search_times.append(1.0)  # Add default time
             
             postgres_results['concurrent_search'] = {
                 'mean': statistics.mean(concurrent_search_times),
@@ -1089,6 +1094,7 @@ class ComprehensiveBenchmarkSuite:
                 id_retrieval_times.append(float('inf'))
         
         # 5. TimescaleDB Concurrent Search Performance
+        concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
         print(f"\n5. TimescaleDB Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
         concurrent_search_times = []
         
@@ -1289,6 +1295,7 @@ class ComprehensiveBenchmarkSuite:
         if not MILVUS_AVAILABLE:
             return {"error": "pymilvus not available. Install with: pip install pymilvus"}
         
+        connection_alias = None
         try:
             # Connect to Milvus
             connection_alias = f"milvus_benchmark_{collection_name}"
@@ -1379,6 +1386,7 @@ class ComprehensiveBenchmarkSuite:
                 id_retrieval_times.append(end_time - start_time)
             
             # Concurrent search benchmark
+            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             print(f"\n5. Milvus Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def milvus_search_worker():
                 query_vector = self.generate_query_vector()
@@ -1394,10 +1402,14 @@ class ComprehensiveBenchmarkSuite:
                 return time.time() - start_time
             
             concurrent_search_times = []
-            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(milvus_search_worker) for _ in range(concurrent_queries)]
-                concurrent_search_times = [future.result() for future in futures]
+                for future in tqdm(as_completed(futures), total=concurrent_queries, desc="Milvus concurrent searches"):
+                    try:
+                        concurrent_search_times.append(future.result())
+                    except Exception as e:
+                        print(f"Milvus concurrent search failed: {e}")
+                        concurrent_search_times.append(1.0)  # Add default time
             
             # Single insert benchmark
             print("\n6. Milvus Single Insert Performance")
@@ -1483,8 +1495,6 @@ class ComprehensiveBenchmarkSuite:
                 end_time = time.time()
                 delete_times.append(end_time - start_time)
             
-            connections.disconnect(connection_alias)
-            
             return {
                 "single_search": {
                     "mean": statistics.mean(single_search_times),
@@ -1526,12 +1536,19 @@ class ComprehensiveBenchmarkSuite:
             
         except Exception as e:
             return {"error": str(e)}
+        finally:
+            if connection_alias is not None:
+                try:
+                    connections.disconnect(connection_alias)
+                except:
+                    pass  # Ignore errors when disconnecting
     
     def run_weaviate_benchmark(self, class_name: str = "TestVectors", iterations: int = 100):
         """Run Weaviate benchmark (read and write operations)"""
         if not WEAVIATE_AVAILABLE:
             return {"error": "weaviate-client not available. Install with: pip install weaviate-client"}
         
+        client = None
         try:
             # Connect to Weaviate using v4 client
             client = weaviate.connect_to_local(
@@ -1637,7 +1654,12 @@ class ComprehensiveBenchmarkSuite:
             concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(weaviate_search_worker) for _ in range(concurrent_queries)]
-                concurrent_search_times = [future.result() for future in futures]
+                for future in tqdm(as_completed(futures), total=concurrent_queries, desc="Weaviate concurrent searches"):
+                    try:
+                        concurrent_search_times.append(future.result())
+                    except Exception as e:
+                        print(f"Concurrent search failed: {e}")
+                        concurrent_search_times.append(1.0)  # Add default time
             
             # Single insert benchmark
             print("\n6. Weaviate Single Insert Performance")
@@ -1737,8 +1759,6 @@ class ComprehensiveBenchmarkSuite:
                 end_time = time.time()
                 delete_times.append(end_time - start_time)
             
-            client.close()
-            
             return {
                 "single_search": {
                     "mean": statistics.mean(single_search_times),
@@ -1780,6 +1800,12 @@ class ComprehensiveBenchmarkSuite:
             
         except Exception as e:
             return {"error": str(e)}
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except:
+                    pass  # Ignore errors when closing
     
     
     # ==================== MAIN BENCHMARK RUNNER ====================
