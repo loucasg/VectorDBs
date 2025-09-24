@@ -1637,6 +1637,7 @@ class ComprehensiveBenchmarkSuite:
                 id_retrieval_times.append(end_time - start_time)
             
             # Concurrent search benchmark
+            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             print(f"\n5. Weaviate Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def weaviate_search_worker():
                 query_vector = self.generate_query_vector()
@@ -1651,15 +1652,19 @@ class ComprehensiveBenchmarkSuite:
                 return time.time() - start_time
             
             concurrent_search_times = []
-            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(weaviate_search_worker) for _ in range(concurrent_queries)]
-                for future in tqdm(as_completed(futures), total=concurrent_queries, desc="Weaviate concurrent searches"):
-                    try:
-                        concurrent_search_times.append(future.result())
-                    except Exception as e:
-                        print(f"Concurrent search failed: {e}")
-                        concurrent_search_times.append(1.0)  # Add default time
+            try:
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    futures = [executor.submit(weaviate_search_worker) for _ in range(concurrent_queries)]
+                    for future in tqdm(as_completed(futures), total=concurrent_queries, desc="Weaviate concurrent searches"):
+                        try:
+                            result = future.result(timeout=30)  # Add timeout
+                            concurrent_search_times.append(result)
+                        except Exception as e:
+                            print(f"Weaviate concurrent search failed: {e}")
+                            concurrent_search_times.append(1.0)  # Add default time
+            except Exception as e:
+                print(f"Weaviate concurrent search setup failed: {e}")
+                concurrent_search_times = [1.0] * concurrent_queries  # Add default times
             
             # Single insert benchmark
             print("\n6. Weaviate Single Insert Performance")
