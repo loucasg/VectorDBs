@@ -19,13 +19,30 @@ from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, Fi
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from tqdm import tqdm
+import requests
+
+# Optional imports for new databases
+try:
+    from pymilvus import connections, Collection, utility, DataType, FieldSchema, CollectionSchema
+    MILVUS_AVAILABLE = True
+except ImportError:
+    MILVUS_AVAILABLE = False
+
+try:
+    import weaviate
+    WEAVIATE_AVAILABLE = True
+except ImportError:
+    WEAVIATE_AVAILABLE = False
 
 
 class ComprehensiveBenchmarkSuite:
     def __init__(self, qdrant_host="localhost", qdrant_port=6333, 
                  postgres_host="localhost", postgres_port=5432,
                  postgres_user="postgres", postgres_password="postgres",
-                 postgres_db="vectordb"):
+                 postgres_db="vectordb",
+                 milvus_host="localhost", milvus_port=19530,
+                 weaviate_host="localhost", weaviate_port=8080,
+                 vespa_host="localhost", vespa_port=8081):
         self.qdrant_host = qdrant_host
         self.qdrant_port = qdrant_port
         self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port)
@@ -36,6 +53,12 @@ class ComprehensiveBenchmarkSuite:
             "password": postgres_password,
             "database": postgres_db
         }
+        self.milvus_host = milvus_host
+        self.milvus_port = milvus_port
+        self.weaviate_host = weaviate_host
+        self.weaviate_port = weaviate_port
+        self.vespa_host = vespa_host
+        self.vespa_port = vespa_port
         self.vector_dim = self._get_vector_dimension()
         self.results = {}
         self.next_id = 0
@@ -651,6 +674,241 @@ class ComprehensiveBenchmarkSuite:
             "duration": duration
         }
     
+    # ==================== NEW DATABASE BENCHMARKS ====================
+    
+    def run_milvus_benchmark(self, collection_name: str, iterations: int = 100):
+        """Run Milvus benchmark (read and write operations)"""
+        if not MILVUS_AVAILABLE:
+            return {"error": "pymilvus not available. Install with: pip install pymilvus"}
+        
+        try:
+            # Connect to Milvus
+            connection_alias = f"milvus_benchmark_{collection_name}"
+            connections.connect(
+                alias=connection_alias,
+                host=self.milvus_host,
+                port=self.milvus_port
+            )
+            
+            # Check if collection exists
+            if not utility.has_collection(collection_name):
+                return {"error": f"Collection '{collection_name}' does not exist"}
+            
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # Read benchmark
+            read_times = []
+            for _ in tqdm(range(iterations), desc="Milvus reads"):
+                query_vector = self.generate_query_vector()
+                start_time = time.time()
+                
+                # Search in Milvus
+                results = collection.search(
+                    data=[query_vector],
+                    anns_field="vector",
+                    param={"metric_type": "COSINE", "params": {"nprobe": 10}},
+                    limit=10
+                )
+                
+                end_time = time.time()
+                read_times.append(end_time - start_time)
+            
+            # Write benchmark
+            write_times = []
+            for i in tqdm(range(iterations), desc="Milvus writes"):
+                vector = self.generate_query_vector()
+                unique_id = 50000 + i  # Use different ID range
+                
+                start_time = time.time()
+                
+                # Insert into Milvus
+                data = [
+                    [vector],  # vector field
+                    [f"Test document {unique_id}"],  # text_content field
+                    [f'{{"source": "test", "id": {unique_id}}}']  # metadata field
+                ]
+                collection.insert(data)
+                collection.flush()
+                
+                end_time = time.time()
+                write_times.append(end_time - start_time)
+            
+            connections.disconnect(connection_alias)
+            
+            return {
+                "read_performance": {
+                    "mean": statistics.mean(read_times),
+                    "median": statistics.median(read_times),
+                    "p95": np.percentile(read_times, 95),
+                    "p99": np.percentile(read_times, 99),
+                    "qps": 1.0 / statistics.mean(read_times)
+                },
+                "write_performance": {
+                    "mean": statistics.mean(write_times),
+                    "median": statistics.median(write_times),
+                    "p95": np.percentile(write_times, 95),
+                    "p99": np.percentile(write_times, 99),
+                    "qps": 1.0 / statistics.mean(write_times)
+                }
+            }
+            
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def run_weaviate_benchmark(self, class_name: str = "TestVectors", iterations: int = 100):
+        """Run Weaviate benchmark (read and write operations)"""
+        if not WEAVIATE_AVAILABLE:
+            return {"error": "weaviate-client not available. Install with: pip install weaviate-client"}
+        
+        try:
+            # Connect to Weaviate
+            client = weaviate.Client(
+                url=f"http://{self.weaviate_host}:{self.weaviate_port}",
+                additional_headers={"X-OpenAI-Api-Key": "dummy"}
+            )
+            
+            if not client.is_ready():
+                return {"error": "Weaviate server not ready"}
+            
+            if not client.schema.exists(class_name):
+                return {"error": f"Class '{class_name}' does not exist"}
+            
+            # Read benchmark
+            read_times = []
+            for _ in tqdm(range(iterations), desc="Weaviate reads"):
+                query_vector = self.generate_query_vector()
+                start_time = time.time()
+                
+                # Search in Weaviate
+                result = client.query.get(class_name, ["text_content", "metadata"]).with_near_vector({
+                    "vector": query_vector
+                }).with_limit(10).do()
+                
+                end_time = time.time()
+                read_times.append(end_time - start_time)
+            
+            # Write benchmark
+            write_times = []
+            for i in tqdm(range(iterations), desc="Weaviate writes"):
+                vector = self.generate_query_vector()
+                unique_id = f"doc_{60000 + i}"
+                
+                start_time = time.time()
+                
+                # Insert into Weaviate
+                data_object = {
+                    "text_content": f"Test document {unique_id}",
+                    "metadata": f'{{"source": "test", "id": "{unique_id}"}}'
+                }
+                
+                client.data_object.create(
+                    data_object=data_object,
+                    class_name=class_name,
+                    vector=vector
+                )
+                
+                end_time = time.time()
+                write_times.append(end_time - start_time)
+            
+            return {
+                "read_performance": {
+                    "mean": statistics.mean(read_times),
+                    "median": statistics.median(read_times),
+                    "p95": np.percentile(read_times, 95),
+                    "p99": np.percentile(read_times, 99),
+                    "qps": 1.0 / statistics.mean(read_times)
+                },
+                "write_performance": {
+                    "mean": statistics.mean(write_times),
+                    "median": statistics.median(write_times),
+                    "p95": np.percentile(write_times, 95),
+                    "p99": np.percentile(write_times, 99),
+                    "qps": 1.0 / statistics.mean(write_times)
+                }
+            }
+            
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def run_vespa_benchmark(self, application_name: str = "test_vectors", document_type: str = "test_vector", iterations: int = 100):
+        """Run Vespa benchmark (read and write operations)"""
+        try:
+            # Test connection
+            response = requests.get(f"http://{self.vespa_host}:{self.vespa_port}/ApplicationStatus", timeout=10)
+            if response.status_code != 200:
+                return {"error": f"Vespa server not ready (status: {response.status_code})"}
+            
+            # Read benchmark
+            read_times = []
+            for _ in tqdm(range(iterations), desc="Vespa reads"):
+                query_vector = self.generate_query_vector()
+                start_time = time.time()
+                
+                # Search in Vespa
+                search_url = f"http://{self.vespa_host}:{self.vespa_port}/search/"
+                params = {
+                    "yql": f"select * from {document_type} where {document_type} contains 'test'",
+                    "hits": 10,
+                    "ranking": "cosine_similarity"
+                }
+                
+                response = requests.get(search_url, params=params, timeout=30)
+                
+                end_time = time.time()
+                read_times.append(end_time - start_time)
+            
+            # Write benchmark
+            write_times = []
+            for i in tqdm(range(iterations), desc="Vespa writes"):
+                vector = self.generate_query_vector()
+                unique_id = f"doc_{70000 + i}"
+                
+                start_time = time.time()
+                
+                # Insert into Vespa
+                document = {
+                    "fields": {
+                        "id": unique_id,
+                        "text_content": f"Test document {unique_id}",
+                        "metadata": f'{{"source": "test", "id": "{unique_id}"}}',
+                        "vector": {
+                            "values": vector
+                        }
+                    }
+                }
+                
+                url = f"http://{self.vespa_host}:{self.vespa_port}/document/v1/{application_name}/{document_type}/docid/{unique_id}"
+                response = requests.put(
+                    url,
+                    json=document,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30
+                )
+                
+                end_time = time.time()
+                write_times.append(end_time - start_time)
+            
+            return {
+                "read_performance": {
+                    "mean": statistics.mean(read_times),
+                    "median": statistics.median(read_times),
+                    "p95": np.percentile(read_times, 95),
+                    "p99": np.percentile(read_times, 99),
+                    "qps": 1.0 / statistics.mean(read_times)
+                },
+                "write_performance": {
+                    "mean": statistics.mean(write_times),
+                    "median": statistics.median(write_times),
+                    "p95": np.percentile(write_times, 95),
+                    "p99": np.percentile(write_times, 99),
+                    "qps": 1.0 / statistics.mean(write_times)
+                }
+            }
+            
+        except Exception as e:
+            return {"error": str(e)}
+    
     # ==================== MAIN BENCHMARK RUNNER ====================
     
     def run_comprehensive_benchmark(self, 
@@ -662,7 +920,10 @@ class ComprehensiveBenchmarkSuite:
                                   run_write: bool = True,
                                   run_postgres: bool = True,
                                   run_comparison: bool = True,
-                                  run_load_test: bool = True):
+                                  run_load_test: bool = True,
+                                  run_milvus: bool = False,
+                                  run_weaviate: bool = False,
+                                  run_vespa: bool = False):
         """Run comprehensive benchmark suite based on flags"""
         
         print("Comprehensive Vector Database Benchmark Suite")
@@ -695,7 +956,10 @@ class ComprehensiveBenchmarkSuite:
             "write_benchmark": None,
             "postgres_benchmark": None,
             "database_comparison": None,
-            "load_test": None
+            "load_test": None,
+            "milvus_benchmark": None,
+            "weaviate_benchmark": None,
+            "vespa_benchmark": None
         }
         
         try:
@@ -720,6 +984,27 @@ class ComprehensiveBenchmarkSuite:
             # Run load test
             if run_load_test:
                 results["load_test"] = self.run_load_test(read_collection, write_collection, load_duration)
+            
+            # Run Milvus benchmark
+            if run_milvus:
+                print("\n" + "="*60)
+                print("RUNNING MILVUS BENCHMARK")
+                print("="*60)
+                results["milvus_benchmark"] = self.run_milvus_benchmark(read_collection, iterations)
+            
+            # Run Weaviate benchmark
+            if run_weaviate:
+                print("\n" + "="*60)
+                print("RUNNING WEAVIATE BENCHMARK")
+                print("="*60)
+                results["weaviate_benchmark"] = self.run_weaviate_benchmark("TestVectors", iterations)
+            
+            # Run Vespa benchmark
+            if run_vespa:
+                print("\n" + "="*60)
+                print("RUNNING VESPA BENCHMARK")
+                print("="*60)
+                results["vespa_benchmark"] = self.run_vespa_benchmark("test_vectors", "test_vector", iterations)
             
             # Print summary
             self.print_summary(results)
@@ -774,6 +1059,34 @@ class ComprehensiveBenchmarkSuite:
             load_stats = results["load_test"]
             print(f"  CPU Usage: {load_stats['cpu_usage']['mean']:.1f}% mean, {load_stats['cpu_usage']['max']:.1f}% max")
             print(f"  Memory Usage: {load_stats['memory_usage']['mean']:.1f}% mean, {load_stats['memory_usage']['max']:.1f}% max")
+        
+        # New database performance summaries
+        if results["milvus_benchmark"]:
+            print("\nMILVUS PERFORMANCE:")
+            milvus_results = results["milvus_benchmark"]
+            if "error" in milvus_results:
+                print(f"  Error: {milvus_results['error']}")
+            else:
+                print(f"  Read: {milvus_results['read_performance']['mean']:.4f}s mean, {milvus_results['read_performance']['qps']:.2f} QPS")
+                print(f"  Write: {milvus_results['write_performance']['mean']:.4f}s mean, {milvus_results['write_performance']['qps']:.2f} QPS")
+        
+        if results["weaviate_benchmark"]:
+            print("\nWEAVIATE PERFORMANCE:")
+            weaviate_results = results["weaviate_benchmark"]
+            if "error" in weaviate_results:
+                print(f"  Error: {weaviate_results['error']}")
+            else:
+                print(f"  Read: {weaviate_results['read_performance']['mean']:.4f}s mean, {weaviate_results['read_performance']['qps']:.2f} QPS")
+                print(f"  Write: {weaviate_results['write_performance']['mean']:.4f}s mean, {weaviate_results['write_performance']['qps']:.2f} QPS")
+        
+        if results["vespa_benchmark"]:
+            print("\nVESPA PERFORMANCE:")
+            vespa_results = results["vespa_benchmark"]
+            if "error" in vespa_results:
+                print(f"  Error: {vespa_results['error']}")
+            else:
+                print(f"  Read: {vespa_results['read_performance']['mean']:.4f}s mean, {vespa_results['read_performance']['qps']:.2f} QPS")
+                print(f"  Write: {vespa_results['write_performance']['mean']:.4f}s mean, {vespa_results['write_performance']['qps']:.2f} QPS")
         
         # Add comprehensive performance comparison summary
         self.print_performance_comparison_summary(results)
@@ -978,6 +1291,12 @@ def main():
     parser.add_argument("--postgres-user", default="postgres", help="PostgreSQL user")
     parser.add_argument("--postgres-password", default="postgres", help="PostgreSQL password")
     parser.add_argument("--postgres-db", default="vectordb", help="PostgreSQL database")
+    parser.add_argument("--milvus-host", default="localhost", help="Milvus host")
+    parser.add_argument("--milvus-port", type=int, default=19530, help="Milvus port")
+    parser.add_argument("--weaviate-host", default="localhost", help="Weaviate host")
+    parser.add_argument("--weaviate-port", type=int, default=8080, help="Weaviate port")
+    parser.add_argument("--vespa-host", default="localhost", help="Vespa host")
+    parser.add_argument("--vespa-port", type=int, default=8081, help="Vespa port")
     
     # Collection options
     parser.add_argument("--read-collection", default="test_vectors", help="Read benchmark collection")
@@ -994,6 +1313,10 @@ def main():
     parser.add_argument("--postgres", action="store_true", help="Run PostgreSQL benchmark only")
     parser.add_argument("--comparison", action="store_true", help="Run database comparison only")
     parser.add_argument("--load-test", action="store_true", help="Run load test only")
+    parser.add_argument("--milvus", action="store_true", help="Run Milvus benchmark only")
+    parser.add_argument("--weaviate", action="store_true", help="Run Weaviate benchmark only")
+    parser.add_argument("--vespa", action="store_true", help="Run Vespa benchmark only")
+    parser.add_argument("--all-databases", action="store_true", help="Run all database benchmarks (Qdrant, PostgreSQL, Milvus, Weaviate, Vespa)")
     
     # Output options
     parser.add_argument("--output", default="comprehensive_benchmark_results.json", help="Output file for results")
@@ -1001,15 +1324,23 @@ def main():
     args = parser.parse_args()
     
     # Determine which tests to run
-    if args.all or not any([args.read, args.write, args.postgres, args.comparison, args.load_test]):
+    if args.all or not any([args.read, args.write, args.postgres, args.comparison, args.load_test, args.milvus, args.weaviate, args.vespa, args.all_databases]):
         # If no specific tests are selected, run all
         run_read = run_write = run_postgres = run_comparison = run_load_test = True
+        run_milvus = run_weaviate = run_vespa = False
+    elif args.all_databases:
+        # Run all database benchmarks
+        run_read = run_write = run_postgres = run_comparison = run_load_test = True
+        run_milvus = run_weaviate = run_vespa = True
     else:
         run_read = args.read
         run_write = args.write
         run_postgres = args.postgres
         run_comparison = args.comparison
         run_load_test = args.load_test
+        run_milvus = args.milvus
+        run_weaviate = args.weaviate
+        run_vespa = args.vespa
     
     benchmark = ComprehensiveBenchmarkSuite(
         qdrant_host=args.qdrant_host,
@@ -1018,7 +1349,13 @@ def main():
         postgres_port=args.postgres_port,
         postgres_user=args.postgres_user,
         postgres_password=args.postgres_password,
-        postgres_db=args.postgres_db
+        postgres_db=args.postgres_db,
+        milvus_host=args.milvus_host,
+        milvus_port=args.milvus_port,
+        weaviate_host=args.weaviate_host,
+        weaviate_port=args.weaviate_port,
+        vespa_host=args.vespa_host,
+        vespa_port=args.vespa_port
     )
     
     try:
@@ -1031,7 +1368,10 @@ def main():
             run_write=run_write,
             run_postgres=run_postgres,
             run_comparison=run_comparison,
-            run_load_test=run_load_test
+            run_load_test=run_load_test,
+            run_milvus=run_milvus,
+            run_weaviate=run_weaviate,
+            run_vespa=run_vespa
         )
         benchmark.save_results(results, args.output)
         

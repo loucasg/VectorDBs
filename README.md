@@ -1,10 +1,10 @@
 # Vector Database Testing Suite
 
-Comprehensive benchmarking and testing suite for vector databases including Qdrant and PostgreSQL with pgvector.
+Comprehensive benchmarking and testing suite for vector databases including Qdrant, PostgreSQL with pgvector, Milvus, Weaviate, and Vespa.
 
 ## Features
 
-- **Docker-based vector databases** - Qdrant and PostgreSQL with pgvector
+- **Docker-based vector databases** - Qdrant, PostgreSQL with pgvector, Milvus, Weaviate, and Vespa
 - **10 million record population** with realistic chunk data
 - **Comprehensive benchmarking** for read and write operations
 - **Database comparison** - Side-by-side performance analysis
@@ -117,6 +117,22 @@ python count_records.py --collection my_collection
 
 > **Note**: The `benchmark_all.py` script consolidates all benchmark functionality. See the [Benchmark Usage](#benchmark-usage) section for detailed usage instructions.
 
+## Vector Database Services
+
+### Database Access Points
+
+| Database | Type | Port | API | Description |
+|----------|------|------|-----|-------------|
+| **Qdrant** | Vector DB | 6333 | REST | High-performance vector database |
+| **Qdrant** | Vector DB | 6334 | gRPC | High-performance vector database |
+| **PostgreSQL** | SQL + Vector | 5432 | SQL | PostgreSQL with pgvector extension |
+| **Milvus** | Vector DB | 19530 | gRPC | Open-source vector database |
+| **Milvus** | Vector DB | 9091 | REST | Open-source vector database |
+| **Weaviate** | Vector DB | 8080 | REST/GraphQL | Open-source vector database |
+| **Weaviate** | Vector DB | 50051 | gRPC | Open-source vector database |
+| **Vespa** | Search Engine | 8081 | REST | Open-source big data serving engine |
+| **Vespa** | Search Engine | 19071 | Admin API | Open-source big data serving engine |
+
 ## Web Interfaces
 
 ### Custom Web UI
@@ -169,6 +185,9 @@ The `benchmark_all.py` script consolidates all benchmark functionality into a si
 - **Write Benchmarks**: Single insert, batch insert (multiple sizes), concurrent inserts, updates, deletes
 - **PostgreSQL Benchmarks**: Search and insert performance testing
 - **Database Comparison**: Direct performance comparison between Qdrant and PostgreSQL
+- **Milvus Benchmarks**: Read and write performance testing for Milvus
+- **Weaviate Benchmarks**: Read and write performance testing for Weaviate
+- **Vespa Benchmarks**: Read and write performance testing for Vespa
 - **Load Testing**: Sustained performance testing with system monitoring
 - **Flexible Execution**: Run all tests or select specific ones with flags
 
@@ -211,6 +230,10 @@ python benchmark_all.py --load-test --load-duration 30
 - `--postgres`: Run PostgreSQL benchmark only
 - `--comparison`: Run database comparison only
 - `--load-test`: Run load test only
+- `--milvus`: Run Milvus benchmark only
+- `--weaviate`: Run Weaviate benchmark only
+- `--vespa`: Run Vespa benchmark only
+- `--all-databases`: Run all database benchmarks (Qdrant, PostgreSQL, Milvus, Weaviate, Vespa)
 
 #### Output
 - `--output`: Output file for results (default: comprehensive_benchmark_results.json)
@@ -257,6 +280,17 @@ python benchmark_all.py --read-collection my_vectors --write-collection my_test_
 ```bash
 # Run read, write, and comparison tests
 python benchmark_all.py --read --write --comparison --iterations 50
+```
+
+#### New Database Benchmarks
+```bash
+# Run individual new database benchmarks
+python benchmark_all.py --milvus --iterations 50
+python benchmark_all.py --weaviate --iterations 50
+python benchmark_all.py --vespa --iterations 50
+
+# Run all database benchmarks (Qdrant, PostgreSQL, Milvus, Weaviate, Vespa)
+python benchmark_all.py --all-databases --iterations 100
 ```
 
 ### Output
