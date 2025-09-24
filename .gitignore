@@ -2,3 +2,4 @@ venv/*
 activate
 __pycache__/*
 results/*
+populate_all.sh
