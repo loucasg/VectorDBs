@@ -1772,7 +1772,7 @@ class ComprehensiveBenchmarkSuite:
             # Run database comparison
             if run_comparison:
                 try:
-                    results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
+                results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
                 except Exception as e:
                     print(f"❌ Database comparison failed: {e}")
                     results["database_comparison"] = {"error": str(e)}
@@ -1965,7 +1965,7 @@ class ComprehensiveBenchmarkSuite:
                 print(f"  • Batch Search (10 vectors): {qdrant_read['batch_search']['qps']:.1f} QPS")
             if "filtered_search" in qdrant_read:
                 print(f"  • Filtered Search: {qdrant_read['filtered_search']['qps']:.1f} QPS")
-            if "retrieve_by_id" in qdrant_read:
+        if "retrieve_by_id" in qdrant_read:
                 print(f"  • ID Retrieval: {qdrant_read['retrieve_by_id']['qps']:.1f} QPS")
             if "concurrent_search" in qdrant_read:
                 print(f"  • Concurrent Search: {qdrant_read['concurrent_search']['qps']:.1f} QPS")
@@ -2037,7 +2037,7 @@ class ComprehensiveBenchmarkSuite:
                 print(f"  • Batch Insert (1000 points): {qdrant_write['batch_insert_1000']['throughput']:.1f} points/sec")
             if "update" in qdrant_write:
                 print(f"  • Update Operations: {qdrant_write['update']['throughput']:.1f} ops/sec")
-            if "delete" in qdrant_write:
+        if "delete" in qdrant_write:
                 print(f"  • Delete Operations: {qdrant_write['delete']['throughput']:.1f} ops/sec")
         
         print("\n📊 OVERALL PERFORMANCE INSIGHTS:")
@@ -2064,12 +2064,12 @@ class ComprehensiveBenchmarkSuite:
         
         # Additional insights
         if qdrant_read:
-            if "concurrent_search" in qdrant_read:
-                concurrent_qps = qdrant_read["concurrent_search"]["qps"]
+        if "concurrent_search" in qdrant_read:
+            concurrent_qps = qdrant_read["concurrent_search"]["qps"]
                 print(f"\n• Qdrant Concurrent Search: {concurrent_qps:.1f} QPS under load")
-            
-            if "scroll" in qdrant_read:
-                scroll_qps = qdrant_read["scroll"]["qps"]
+        
+        if "scroll" in qdrant_read:
+            scroll_qps = qdrant_read["scroll"]["qps"]
                 print(f"• Qdrant Large Dataset Scrolling: {scroll_qps:.1f} QPS for bulk operations")
         
         # Memory and CPU insights
@@ -2271,7 +2271,7 @@ class ComprehensiveBenchmarkSuite:
                 width = column_widths[i]
                 if metric in ['Database', 'Type']:
                     formatted_row.append(f"{row[metric]:<{width}}")
-                else:
+            else:
                     try:
                         value = int(row[metric])
                         if value == best_values[metric] and value > 0:
@@ -2331,8 +2331,11 @@ class ComprehensiveBenchmarkSuite:
             if len(search_rankings) >= 2:
                 fastest_qps = search_rankings[0][1]
                 slowest_qps = search_rankings[-1][1]
-                search_ratio = fastest_qps / slowest_qps
-                print(f"📊 Search Performance Range: {search_ratio:.1f}x difference between fastest and slowest")
+                if slowest_qps > 0:
+                    search_ratio = fastest_qps / slowest_qps
+                    print(f"📊 Search Performance Range: {search_ratio:.1f}x difference between fastest and slowest")
+                else:
+                    print(f"📊 Search Performance Range: Cannot calculate ratio (slowest QPS is 0)")
             
             if len(write_rankings) >= 2:
                 fastest_ops = write_rankings[0][1]
