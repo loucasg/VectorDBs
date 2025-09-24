@@ -287,7 +287,8 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 6. Concurrent Searches
-        print("\n6. Concurrent Searches (100 queries, 10 workers)")
+        concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
+        print(f"\n6. Concurrent Searches ({concurrent_queries} queries, 10 workers)")
         def single_search():
             query_vector = self.generate_query_vector()
             start_time = time.time()
@@ -300,8 +301,8 @@ class ComprehensiveBenchmarkSuite:
         
         concurrent_times = []
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(single_search) for _ in range(100)]
-            for future in tqdm(as_completed(futures), total=100, desc="Concurrent searches"):
+            futures = [executor.submit(single_search) for _ in range(concurrent_queries)]
+            for future in tqdm(as_completed(futures), total=concurrent_queries, desc="Concurrent searches"):
                 concurrent_times.append(future.result())
         
         read_results['concurrent_search'] = {
@@ -393,10 +394,12 @@ class ComprehensiveBenchmarkSuite:
             }
         
         # 3. Concurrent Insertions
-        print("\n3. Concurrent Insertions (10 workers, batch size 100)")
+        concurrent_batches = max(5, iterations // 2)  # At least 5 batches for meaningful concurrent testing
+        batch_size = 100
+        print(f"\n3. Concurrent Insertions (10 workers, {concurrent_batches} batches, batch size {batch_size})")
         def batch_insert():
-            points = [self.generate_test_point(self.next_id + i) for i in range(100)]
-            self.next_id += 100
+            points = [self.generate_test_point(self.next_id + i) for i in range(batch_size)]
+            self.next_id += batch_size
             start_time = time.time()
             self.qdrant_client.upsert(
                 collection_name=collection_name,
@@ -406,8 +409,8 @@ class ComprehensiveBenchmarkSuite:
         
         concurrent_times = []
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(batch_insert) for _ in range(50)]
-            for future in tqdm(as_completed(futures), total=50, desc="Concurrent inserts"):
+            futures = [executor.submit(batch_insert) for _ in range(concurrent_batches)]
+            for future in tqdm(as_completed(futures), total=concurrent_batches, desc="Concurrent inserts"):
                 concurrent_times.append(future.result())
         
         write_results['concurrent_insert'] = {
@@ -594,7 +597,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Concurrent search performance
-            print("\n5. PostgreSQL Concurrent Search Performance")
+            print(f"\n5. PostgreSQL Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             concurrent_search_times = []
             def postgres_search_worker():
                 query_vector = self.generate_query_vector()
@@ -610,8 +613,9 @@ class ComprehensiveBenchmarkSuite:
                     cur.fetchall()
                 return time.time() - start_time
             
+            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(postgres_search_worker) for _ in range(100)]
+                futures = [executor.submit(postgres_search_worker) for _ in range(concurrent_queries)]
                 concurrent_search_times = [future.result() for future in futures]
             
             postgres_results['concurrent_search'] = {
@@ -1008,7 +1012,7 @@ class ComprehensiveBenchmarkSuite:
                 id_retrieval_times.append(float('inf'))
         
         # 5. TimescaleDB Concurrent Search Performance
-        print(f"\n5. TimescaleDB Concurrent Search Performance")
+        print(f"\n5. TimescaleDB Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
         concurrent_search_times = []
         
         def timescaledb_search_worker():
@@ -1029,9 +1033,10 @@ class ComprehensiveBenchmarkSuite:
             except Exception as e:
                 return False
         
+        concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(timescaledb_search_worker) for _ in range(100)]
-            for future in tqdm(as_completed(futures), total=100, desc="TimescaleDB concurrent searches"):
+            futures = [executor.submit(timescaledb_search_worker) for _ in range(concurrent_queries)]
+            for future in tqdm(as_completed(futures), total=concurrent_queries, desc="TimescaleDB concurrent searches"):
                 start_time = time.time()
                 success = future.result()
                 concurrent_search_times.append(time.time() - start_time)
@@ -1297,7 +1302,7 @@ class ComprehensiveBenchmarkSuite:
                 id_retrieval_times.append(end_time - start_time)
             
             # Concurrent search benchmark
-            print("\n5. Milvus Concurrent Search Performance")
+            print(f"\n5. Milvus Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def milvus_search_worker():
                 query_vector = self.generate_query_vector()
                 start_time = time.time()
@@ -1312,8 +1317,9 @@ class ComprehensiveBenchmarkSuite:
                 return time.time() - start_time
             
             concurrent_search_times = []
+            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(milvus_search_worker) for _ in range(100)]
+                futures = [executor.submit(milvus_search_worker) for _ in range(concurrent_queries)]
                 concurrent_search_times = [future.result() for future in futures]
             
             # Single insert benchmark
@@ -1537,7 +1543,7 @@ class ComprehensiveBenchmarkSuite:
                 id_retrieval_times.append(end_time - start_time)
             
             # Concurrent search benchmark
-            print("\n5. Weaviate Concurrent Search Performance")
+            print(f"\n5. Weaviate Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def weaviate_search_worker():
                 query_vector = self.generate_query_vector()
                 start_time = time.time()
@@ -1551,8 +1557,9 @@ class ComprehensiveBenchmarkSuite:
                 return time.time() - start_time
             
             concurrent_search_times = []
+            concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
             with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(weaviate_search_worker) for _ in range(100)]
+                futures = [executor.submit(weaviate_search_worker) for _ in range(concurrent_queries)]
                 concurrent_search_times = [future.result() for future in futures]
             
             # Single insert benchmark
