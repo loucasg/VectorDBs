@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Populate TimescaleDB with vector embeddings for benchmarking
+Updated to work with pgvectorscale extension and DiskANN indexes
 """
 
 import time
@@ -32,11 +33,41 @@ class TimescaleDBPopulator:
             print(f"❌ Failed to connect to TimescaleDB: {e}")
             return False
     
-    def create_table(self):
-        """Create the vector embeddings table with TimescaleDB hypertable"""
+    def check_extensions(self):
+        """Check if required extensions are available"""
         try:
             with self.conn.cursor() as cur:
-                # Check if table exists
+                # Check for TimescaleDB extension
+                cur.execute("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'timescaledb');")
+                has_timescaledb = cur.fetchone()[0]
+                
+                # Check for pgvector extension
+                cur.execute("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector');")
+                has_vector = cur.fetchone()[0]
+                
+                # Check for pgvectorscale extension
+                cur.execute("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vectorscale');")
+                has_vectorscale = cur.fetchone()[0]
+                
+                print(f"📊 Extensions status:")
+                print(f"   TimescaleDB: {'✅' if has_timescaledb else '❌'}")
+                print(f"   pgvector: {'✅' if has_vector else '❌'}")
+                print(f"   pgvectorscale: {'✅' if has_vectorscale else '❌'}")
+                
+                if not (has_timescaledb and has_vector and has_vectorscale):
+                    print("❌ Required extensions not found. Please run init-timescaledb.sql first.")
+                    return False
+                
+                return True
+                
+        except Exception as e:
+            print(f"❌ Error checking extensions: {e}")
+            return False
+    
+    def check_table_exists(self):
+        """Check if the vector_embeddings table exists"""
+        try:
+            with self.conn.cursor() as cur:
                 cur.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables 
@@ -45,65 +76,65 @@ class TimescaleDBPopulator:
                 """)
                 table_exists = cur.fetchone()[0]
                 
-                if not table_exists:
-                    # Create the table
-                    cur.execute("""
-                        CREATE TABLE vector_embeddings (
-                            vector_id BIGINT,
-                            embedding VECTOR(1024),
-                            text_content TEXT,
-                            metadata JSONB,
-                            created_at TIMESTAMPTZ DEFAULT NOW(),
-                            PRIMARY KEY (vector_id, created_at)
-                        );
-                    """)
-                    
-                    # Create TimescaleDB hypertable
-                    cur.execute("""
-                        SELECT create_hypertable('vector_embeddings', 'created_at');
-                    """)
+                if table_exists:
+                    print("✅ TimescaleDB table exists, will append new records")
+                    return True
                 else:
-                    print("✅ TimescaleDB table already exists, will append new records")
+                    print("❌ Table 'vector_embeddings' not found. Please run init-timescaledb.sql first.")
+                    return False
+                    
+        except Exception as e:
+            print(f"❌ Error checking table: {e}")
+            return False
+    
+    def get_diskann_stats(self):
+        """Get DiskANN index statistics"""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT * FROM get_diskann_index_stats();")
+                stats = cur.fetchall()
                 
-                # Create vector similarity index
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS vector_embeddings_embedding_idx 
-                    ON vector_embeddings USING ivfflat (embedding vector_cosine_ops) 
-                    WITH (lists = 100);
-                """)
-                
-                # Create metadata index
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS vector_embeddings_metadata_idx 
-                    ON vector_embeddings USING gin (metadata);
-                """)
-                
-                print("✅ TimescaleDB table and indexes created successfully")
-                return True
+                if stats:
+                    print("📊 DiskANN Index Statistics:")
+                    for stat in stats:
+                        print(f"   {stat[0]}: {stat[1]} ({stat[2]})")
+                else:
+                    print("⚠️  No DiskANN indexes found")
+                    
+        except Exception as e:
+            print(f"⚠️  Could not retrieve DiskANN stats: {e}")
+    
+    def optimize_diskann(self):
+        """Optimize DiskANN for better performance"""
+        try:
+            with self.conn.cursor() as cur:
+                # Optimize DiskANN query performance
+                cur.execute("SELECT optimize_diskann_query(400, true);")
+                result = cur.fetchone()[0]
+                print(f"🔧 DiskANN optimization: {result}")
                 
         except Exception as e:
-            print(f"❌ Error creating TimescaleDB table: {e}")
-            return False
+            print(f"⚠️  Could not optimize DiskANN: {e}")
     
     def generate_vector(self):
         """Generate a random vector for testing"""
         return np.random.rand(self.vector_dim).astype(np.float32).tolist()
     
-    def insert_batch(self, vectors, text_contents, metadata_list, start_id=None):
+    def insert_batch(self, vectors, text_contents, metadata_list, start_vector_id=None):
         """Insert a batch of data into TimescaleDB"""
         try:
             with self.conn.cursor() as cur:
-                # Get current max ID if not provided
-                if start_id is None:
+                # Get current max vector_id if not provided
+                if start_vector_id is None:
                     cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings;")
-                    start_id = cur.fetchone()[0]
+                    start_vector_id = cur.fetchone()[0]
                 
                 # Prepare data for batch insert
                 data = []
                 for i, (vector, text, metadata) in enumerate(zip(vectors, text_contents, metadata_list)):
-                    data.append((start_id + i + 1, vector, text, json.dumps(metadata)))
+                    data.append((start_vector_id + i + 1, vector, text, json.dumps(metadata)))
                 
-                # Batch insert
+                # Batch insert using the new schema
                 cur.executemany("""
                     INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
                     VALUES (%s, %s::vector, %s, %s)
@@ -125,41 +156,74 @@ class TimescaleDBPopulator:
             print(f"❌ Error getting count: {e}")
             return 0
     
+    def get_collection_stats(self):
+        """Get collection statistics using the pgvectorscale function"""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT * FROM get_collection_stats();")
+                stats = cur.fetchone()
+                
+                if stats:
+                    print(f"📊 Collection Statistics:")
+                    print(f"   Total points: {stats[0]:,}")
+                    print(f"   Vector dimensions: {stats[1]}")
+                    print(f"   Avg metadata size: {stats[2]:.2f} bytes")
+                    print(f"   Created at range: {stats[3]}")
+                    print(f"   Hypertable info: {stats[4]}")
+                    print(f"   DiskANN indexes: {stats[5]}")
+                    print(f"   Index sizes: {stats[6]}")
+                    
+        except Exception as e:
+            print(f"⚠️  Could not retrieve collection stats: {e}")
+    
     def populate(self, num_records=100000, batch_size=1000):
         """Populate the database with vector embeddings"""
-        print(f"🚀 Starting TimescaleDB population with {num_records:,} records...")
+        print(f"🚀 Starting TimescaleDB + pgvectorscale population with {num_records:,} records...")
         
         if not self.connect():
             return False
+        
+        # Check extensions and table
+        if not self.check_extensions():
+            return False
             
-        if not self.create_table():
+        if not self.check_table_exists():
             return False
         
-        # Check if data already exists and get current max ID
+        # Get initial collection stats
+        print("\n📊 Initial collection state:")
+        self.get_collection_stats()
+        
+        # Check if data already exists and get current max vector_id
         current_count = self.get_count()
         current_max_id = 0
         if current_count > 0:
-            print(f"📊 TimescaleDB already contains {current_count:,} records")
-            # Get current max ID
+            print(f"\n📊 TimescaleDB already contains {current_count:,} records")
+            # Get current max vector_id
             with self.conn.cursor() as cur:
                 cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings;")
                 current_max_id = cur.fetchone()[0]
-            print(f"📊 Current max ID: {current_max_id:,}")
+            print(f"📊 Current max vector_id: {current_max_id:,}")
             print("📝 Will append new records to existing data")
+        
+        # Optimize DiskANN before bulk insert
+        print("\n🔧 Optimizing DiskANN for bulk insert...")
+        self.optimize_diskann()
         
         start_time = time.time()
         total_inserted = 0
         current_id = current_max_id
         
         # Generate and insert data in batches
+        print(f"\n📝 Inserting {num_records:,} records in batches of {batch_size:,}...")
         for batch_start in tqdm(range(0, num_records, batch_size), desc="Inserting batches"):
             batch_end = min(batch_start + batch_size, num_records)
             batch_size_actual = batch_end - batch_start
             
             # Generate batch data
             vectors = [self.generate_vector() for _ in range(batch_size_actual)]
-            text_contents = [f"TimescaleDB document {current_id + i + 1}" for i in range(batch_size_actual)]
-            metadata_list = [{"source": "timescaledb", "batch": batch_start // batch_size, "index": i} 
+            text_contents = [f"TimescaleDB+pgvectorscale document {current_id + i + 1}" for i in range(batch_size_actual)]
+            metadata_list = [{"source": "timescaledb_vectorscale", "batch": batch_start // batch_size, "index": i, "extension": "pgvectorscale"} 
                            for i in range(batch_size_actual)]
             
             # Insert batch
@@ -174,20 +238,32 @@ class TimescaleDBPopulator:
         end_time = time.time()
         duration = end_time - start_time
         
-        print(f"\n✅ TimescaleDB population completed!")
+        print(f"\n✅ TimescaleDB + pgvectorscale population completed!")
         print(f"📊 Records inserted: {total_inserted:,}")
         print(f"⏱️  Duration: {duration:.2f} seconds")
         print(f"🚀 Insert rate: {total_inserted/duration:.0f} records/second")
         
-        # Verify final count
+        # Verify final count and get updated stats
         final_count = self.get_count()
         print(f"📈 Total records in TimescaleDB: {final_count:,}")
+        
+        # Get final collection stats
+        print("\n📊 Final collection state:")
+        self.get_collection_stats()
+        
+        # Get DiskANN index stats
+        print("\n📊 DiskANN Index Statistics:")
+        self.get_diskann_stats()
+        
+        # Final DiskANN optimization
+        print("\n🔧 Final DiskANN optimization...")
+        self.optimize_diskann()
         
         self.conn.close()
         return True
 
 def main():
-    parser = argparse.ArgumentParser(description="Populate TimescaleDB with vector embeddings")
+    parser = argparse.ArgumentParser(description="Populate TimescaleDB with vector embeddings using pgvectorscale")
     parser.add_argument("--records", type=int, default=100000, help="Number of records to insert")
     parser.add_argument("--batch-size", type=int, default=1000, help="Batch size for inserts")
     parser.add_argument("--host", default="localhost", help="TimescaleDB host")
