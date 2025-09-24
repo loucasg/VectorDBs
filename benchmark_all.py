@@ -49,7 +49,11 @@ class ComprehensiveBenchmarkSuite:
                  ):
         self.qdrant_host = qdrant_host
         self.qdrant_port = qdrant_port
-        self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port)
+        self.qdrant_client = QdrantClient(
+            host=qdrant_host, 
+            port=qdrant_port,
+            timeout=60.0  # 60 second timeout
+        )
         self.postgres_config = {
             "host": postgres_host,
             "port": postgres_port,
@@ -182,11 +186,11 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 2. Batch Search
-        print("\n2. Batch Vector Search (10 vectors, 10 results each)")
+        print("\n2. Batch Vector Search (5 vectors, 10 results each)")
         batch_search_times = []
         batch_iterations = max(1, iterations // 10)
         for _ in tqdm(range(batch_iterations), desc="Batch searches"):
-            query_vectors = [self.generate_query_vector() for _ in range(10)]
+            query_vectors = [self.generate_query_vector() for _ in range(5)]  # Reduced from 10 to 5
             start_time = time.time()
             self.qdrant_client.search_batch(
                 collection_name=collection_name,
@@ -742,15 +746,26 @@ class ComprehensiveBenchmarkSuite:
         print(f"DATABASE COMPARISON")
         print(f"{'='*60}")
         
-        # Run Qdrant benchmark
-        qdrant_read = self.run_read_benchmark(qdrant_collection, iterations)
-        qdrant_write = self.run_write_benchmark(qdrant_collection, iterations, cleanup=False)
+        # Use lighter iterations for comparison to avoid timeouts
+        comparison_iterations = min(iterations, 10)
         
-        # Run PostgreSQL benchmark
-        postgres_results = self.run_postgres_benchmark(iterations)
+        # Run Qdrant benchmark with reduced iterations
+        try:
+            qdrant_read = self.run_read_benchmark(qdrant_collection, comparison_iterations)
+            qdrant_write = self.run_write_benchmark(qdrant_collection, comparison_iterations, cleanup=False)
+        except Exception as e:
+            print(f"❌ Qdrant benchmark failed: {e}")
+            qdrant_read = qdrant_write = None
         
-        if not all([qdrant_read, postgres_results]):
-            print("Error: Could not complete database comparison")
+        # Run PostgreSQL benchmark with reduced iterations
+        try:
+            postgres_results = self.run_postgres_benchmark(comparison_iterations)
+        except Exception as e:
+            print(f"❌ PostgreSQL benchmark failed: {e}")
+            postgres_results = None
+        
+        if not any([qdrant_read, postgres_results]):
+            print("Error: Could not complete database comparison - all benchmarks failed")
             return None
         
         # Calculate performance ratios
@@ -865,7 +880,7 @@ class ComprehensiveBenchmarkSuite:
             "duration": duration
         }
     
-    # ==================== NEW DATABASE BENCHMARKS ====================
+    # ==================== TimescaleDB BENCHMARKS ====================
     
     def run_postgres_ts_benchmark(self, iterations: int = 100):
         """Run TimescaleDB benchmark (read and write operations)"""
@@ -1756,7 +1771,11 @@ class ComprehensiveBenchmarkSuite:
             
             # Run database comparison
             if run_comparison:
-                results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
+                try:
+                    results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
+                except Exception as e:
+                    print(f"❌ Database comparison failed: {e}")
+                    results["database_comparison"] = {"error": str(e)}
             
             # Run load test
             if run_load_test:
