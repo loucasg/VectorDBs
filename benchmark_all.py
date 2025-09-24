@@ -36,7 +36,106 @@ except ImportError:
     WEAVIATE_AVAILABLE = False
 
 
-class ComprehensiveBenchmarkSuite:
+class StandardizedBenchmarkOperations:
+    """Base class defining standardized benchmark operations for consistent comparison"""
+
+    def __init__(self, vector_dim: int):
+        self.vector_dim = vector_dim
+        self.test_data_cache = {}
+
+    def generate_standard_vector(self, seed: int = None) -> List[float]:
+        """Generate a standardized normalized vector"""
+        if seed is not None:
+            np.random.seed(seed)
+        vector = np.random.normal(0, 1, self.vector_dim)
+        norm = np.linalg.norm(vector)
+        if norm > 0:
+            vector = vector / norm
+        return vector.tolist()
+
+    def generate_standard_payload(self, point_id: int) -> Dict[str, Any]:
+        """Generate standardized payload structure for all databases"""
+        return {
+            "id": point_id,
+            "text_content": f"Standard test document {point_id}",
+            "metadata": {
+                "category": np.random.choice(["A", "B", "C", "D"]),
+                "value": float(np.random.uniform(0, 100)),
+                "timestamp": int(time.time()),
+                "source": "benchmark_test"
+            }
+        }
+
+    def generate_test_vectors(self, count: int, start_id: int = 0) -> List[Dict[str, Any]]:
+        """Generate standardized test data for batch operations"""
+        cache_key = f"{count}_{start_id}"
+        if cache_key in self.test_data_cache:
+            return self.test_data_cache[cache_key]
+
+        test_data = []
+        for i in range(count):
+            point_id = start_id + i
+            test_data.append({
+                "id": point_id,
+                "vector": self.generate_standard_vector(seed=point_id),  # Consistent vectors with seed
+                "payload": self.generate_standard_payload(point_id)
+            })
+
+        self.test_data_cache[cache_key] = test_data
+        return test_data
+
+    def measure_operation_time(self, operation_func, *args, **kwargs):
+        """Standardized timing measurement"""
+        start_time = time.perf_counter()
+        try:
+            result = operation_func(*args, **kwargs)
+            end_time = time.perf_counter()
+            return end_time - start_time, result, None
+        except Exception as e:
+            end_time = time.perf_counter()
+            return end_time - start_time, None, str(e)
+
+    def calculate_standard_metrics(self, times: List[float]) -> Dict[str, float]:
+        """Calculate standardized performance metrics"""
+        if not times or all(t == float('inf') for t in times):
+            return {
+                'mean': 0.0,
+                'median': 0.0,
+                'p95': 0.0,
+                'p99': 0.0,
+                'min': 0.0,
+                'max': 0.0,
+                'qps': 0.0,
+                'throughput': 0.0
+            }
+
+        valid_times = [t for t in times if t != float('inf') and t > 0]
+        if not valid_times:
+            return {
+                'mean': 0.0,
+                'median': 0.0,
+                'p95': 0.0,
+                'p99': 0.0,
+                'min': 0.0,
+                'max': 0.0,
+                'qps': 0.0,
+                'throughput': 0.0
+            }
+
+        mean_time = statistics.mean(valid_times)
+        return {
+            'mean': mean_time,
+            'median': statistics.median(valid_times),
+            'p95': np.percentile(valid_times, 95),
+            'p99': np.percentile(valid_times, 99),
+            'min': min(valid_times),
+            'max': max(valid_times),
+            'qps': 1.0 / mean_time if mean_time > 0 else 0.0,
+            'throughput': 1.0 / mean_time if mean_time > 0 else 0.0
+        }
+
+
+class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
     def __init__(self, qdrant_host="localhost", qdrant_port=6333, 
                  postgres_host="localhost", postgres_port=5432,
                  postgres_user="postgres", postgres_password="postgres",
@@ -73,6 +172,10 @@ class ComprehensiveBenchmarkSuite:
         self.weaviate_host = weaviate_host
         self.weaviate_port = weaviate_port
         self.vector_dim = self._get_vector_dimension()
+
+        # Initialize the standardized benchmark base class
+        super().__init__(self.vector_dim)
+
         self.results = {}
         self.next_id = 0
         
@@ -116,38 +219,786 @@ class ComprehensiveBenchmarkSuite:
             "platform": os.name
         }
     
-    def generate_query_vector(self) -> List[float]:
-        """Generate a random normalized query vector"""
-        vector = np.random.normal(0, 1, self.vector_dim)
-        norm = np.linalg.norm(vector)
-        if norm > 0:
-            vector = vector / norm
-        return vector.tolist()
-    
-    def generate_test_point(self, point_id: int) -> PointStruct:
-        """Generate a test point for write operations"""
-        vector = self.generate_query_vector()
-        payload = {
-            "id": point_id,
-            "text": f"Test point {point_id}",
-            "metadata": {
-                "category": np.random.choice(["A", "B", "C", "D"]),
-                "value": np.random.uniform(0, 100),
-                "timestamp": int(time.time())
-            }
-        }
-        
+    def generate_qdrant_point(self, point_id: int) -> PointStruct:
+        """Generate a standardized Qdrant test point"""
+        test_data = self.generate_test_vectors(1, point_id)[0]
         return PointStruct(
             id=point_id,
-            vector=vector,
-            payload=payload
+            vector=test_data["vector"],
+            payload=test_data["payload"]
         )
     
-    # ==================== READ BENCHMARKS ====================
-    
+    # ==================== STANDARDIZED BENCHMARK OPERATIONS ====================
+
+    def run_standardized_benchmark(self, db_type: str, collection_name: str, iterations: int = 100):
+        """Run standardized benchmark for any database type"""
+        print(f"\{'='*60}")
+        print(f"{db_type.upper()} STANDARDIZED BENCHMARK - Collection: {collection_name}")
+        print(f"{'='*60}")
+
+        # Get database-specific operations
+        db_ops = self._get_database_operations(db_type, collection_name)
+        if not db_ops:
+            return {"error": f"Database type {db_type} not supported"}
+
+        results = {}
+
+        # Standard benchmark operations
+        benchmark_operations = [
+            ("single_search", "Single Vector Search", self._benchmark_single_search),
+            ("batch_search", "Batch Vector Search (10 vectors)", self._benchmark_batch_search),
+            ("filtered_search", "Filtered Vector Search", self._benchmark_filtered_search),
+            ("retrieve_by_id", "ID-based Retrieval", self._benchmark_retrieve_by_id),
+            ("concurrent_search", "Concurrent Search", self._benchmark_concurrent_search),
+            ("single_insert", "Single Insert", self._benchmark_single_insert),
+            ("batch_insert_100", "Batch Insert (100 points)", self._benchmark_batch_insert),
+            ("update", "Update Operation", self._benchmark_update),
+            ("delete", "Delete Operation", self._benchmark_delete)
+        ]
+
+        for operation_key, operation_name, benchmark_func in benchmark_operations:
+            print(f"\{len(results)+1}. {operation_name}")
+            try:
+                times = benchmark_func(db_ops, iterations)
+                results[operation_key] = self.calculate_standard_metrics(times)
+
+                # Add batch size info for batch operations
+                if "batch" in operation_key:
+                    if "100" in operation_key:
+                        results[operation_key]['batch_size'] = 100
+                    else:
+                        results[operation_key]['batch_size'] = 10
+
+            except Exception as e:
+                print(f"❌ {operation_name} failed: {e}")
+                results[operation_key] = {"error": str(e)}
+
+        return results
+
+    def _get_database_operations(self, db_type: str, collection_name: str):
+        """Get database-specific operation functions"""
+        if db_type.lower() == "qdrant":
+            return self._get_qdrant_operations(collection_name)
+        elif db_type.lower() == "postgresql":
+            return self._get_postgres_operations()
+        elif db_type.lower() == "timescaledb":
+            return self._get_timescaledb_operations()
+        elif db_type.lower() == "milvus":
+            return self._get_milvus_operations(collection_name)
+        elif db_type.lower() == "weaviate":
+            return self._get_weaviate_operations(collection_name)
+        return None
+
+    # ==================== STANDARDIZED BENCHMARK IMPLEMENTATIONS ====================
+
+    def _benchmark_single_search(self, db_ops, iterations: int) -> List[float]:
+        """Standardized single vector search benchmark"""
+        times = []
+        for i in tqdm(range(iterations), desc="Single searches"):
+            # Use consistent query vector with seed for reproducibility
+            query_vector = self.generate_standard_vector(seed=i % 100)
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["single_search"], query_vector
+            )
+            times.append(elapsed_time if not error else float('inf'))
+        return times
+
+    def _benchmark_batch_search(self, db_ops, iterations: int) -> List[float]:
+        """Standardized batch vector search benchmark (10 vectors)"""
+        times = []
+        batch_iterations = max(1, iterations // 10)
+        for i in tqdm(range(batch_iterations), desc="Batch searches"):
+            # Generate 10 consistent query vectors
+            query_vectors = [self.generate_standard_vector(seed=i*10+j) for j in range(10)]
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["batch_search"], query_vectors
+            )
+            times.append(elapsed_time if not error else float('inf'))
+        return times
+
+    def _benchmark_filtered_search(self, db_ops, iterations: int) -> List[float]:
+        """Standardized filtered vector search benchmark"""
+        times = []
+        categories = ["A", "B", "C", "D"]
+        for i in tqdm(range(iterations), desc="Filtered searches"):
+            query_vector = self.generate_standard_vector(seed=i % 100)
+            filter_category = categories[i % len(categories)]
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["filtered_search"], query_vector, filter_category
+            )
+            times.append(elapsed_time if not error else float('inf'))
+        return times
+
+    def _benchmark_retrieve_by_id(self, db_ops, iterations: int) -> List[float]:
+        """Standardized ID-based retrieval benchmark"""
+        times = []
+        for i in tqdm(range(iterations), desc="ID retrievals"):
+            # Use consistent ID ranges for reproducible results
+            ids = list(range(i * 10, (i + 1) * 10))
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["retrieve_by_id"], ids
+            )
+            times.append(elapsed_time if not error else float('inf'))
+        return times
+
+    def _benchmark_concurrent_search(self, db_ops, iterations: int) -> List[float]:
+        """Standardized concurrent search benchmark"""
+        concurrent_queries = max(10, iterations)
+
+        def single_search_worker(worker_id):
+            query_vector = self.generate_standard_vector(seed=worker_id)
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["single_search"], query_vector
+            )
+            return elapsed_time if not error else float('inf')
+
+        times = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(single_search_worker, i) for i in range(concurrent_queries)]
+            for future in tqdm(as_completed(futures), total=concurrent_queries, desc="Concurrent searches"):
+                try:
+                    times.append(future.result())
+                except Exception:
+                    times.append(float('inf'))
+        return times
+
+    def _benchmark_single_insert(self, db_ops, iterations: int) -> List[float]:
+        """Standardized single insert benchmark"""
+        times = []
+        start_id = self.next_id
+        for i in tqdm(range(iterations), desc="Single inserts"):
+            test_data = self.generate_test_vectors(1, start_id + i)[0]
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["single_insert"], test_data
+            )
+            times.append(elapsed_time if not error else float('inf'))
+        self.next_id = start_id + iterations
+        return times
+
+    def _benchmark_batch_insert(self, db_ops, iterations: int) -> List[float]:
+        """Standardized batch insert benchmark (100 points)"""
+        times = []
+        batch_iterations = max(1, iterations // 10)
+        batch_size = 100
+        start_id = self.next_id
+
+        for i in tqdm(range(batch_iterations), desc="Batch inserts"):
+            batch_start_id = start_id + (i * batch_size)
+            test_data = self.generate_test_vectors(batch_size, batch_start_id)
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["batch_insert"], test_data
+            )
+            times.append(elapsed_time if not error else float('inf'))
+
+        self.next_id = start_id + (batch_iterations * batch_size)
+        return times
+
+    def _benchmark_update(self, db_ops, iterations: int) -> List[float]:
+        """Standardized update benchmark"""
+        times = []
+        for i in tqdm(range(iterations), desc="Update operations"):
+            # Use consistent update IDs
+            update_id = i % 1000
+            test_data = self.generate_test_vectors(1, update_id)[0]
+            test_data["payload"]["text_content"] = f"Updated document {update_id}"
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["update"], test_data
+            )
+            times.append(elapsed_time if not error else float('inf'))
+        return times
+
+    def _benchmark_delete(self, db_ops, iterations: int) -> List[float]:
+        """Standardized delete benchmark"""
+        times = []
+        delete_iterations = min(iterations, 100)  # Limit deletes to avoid removing too much data
+        for i in tqdm(range(delete_iterations), desc="Delete operations"):
+            # Use consistent delete IDs
+            delete_id = 10000 + i  # Use high IDs to avoid conflicts
+            elapsed_time, result, error = self.measure_operation_time(
+                db_ops["delete"], delete_id
+            )
+            times.append(elapsed_time if not error else float('inf'))
+        return times
+
+    # ==================== DATABASE-SPECIFIC OPERATION IMPLEMENTATIONS ====================
+
+    def _get_qdrant_operations(self, collection_name: str):
+        """Get Qdrant-specific database operations"""
+        def single_search(query_vector):
+            return self.qdrant_client.query_points(
+                collection_name=collection_name,
+                query=query_vector,
+                limit=10
+            )
+
+        def batch_search(query_vectors):
+            from qdrant_client.models import QueryRequest
+            requests = [QueryRequest(query=vector, limit=10) for vector in query_vectors]
+            return self.qdrant_client.query_batch_points(
+                collection_name=collection_name,
+                requests=requests
+            )
+
+        def filtered_search(query_vector, filter_category):
+            return self.qdrant_client.query_points(
+                collection_name=collection_name,
+                query=query_vector,
+                query_filter=Filter(
+                    must=[FieldCondition(
+                        key="metadata.category",
+                        match=MatchValue(value=filter_category)
+                    )]
+                ),
+                limit=10
+            )
+
+        def retrieve_by_id(ids):
+            return self.qdrant_client.retrieve(
+                collection_name=collection_name,
+                ids=ids
+            )
+
+        def single_insert(test_data):
+            point = PointStruct(
+                id=test_data["id"],
+                vector=test_data["vector"],
+                payload=test_data["payload"]
+            )
+            return self.qdrant_client.upsert(
+                collection_name=collection_name,
+                points=[point]
+            )
+
+        def batch_insert(test_data_list):
+            points = [
+                PointStruct(
+                    id=data["id"],
+                    vector=data["vector"],
+                    payload=data["payload"]
+                ) for data in test_data_list
+            ]
+            return self.qdrant_client.upsert(
+                collection_name=collection_name,
+                points=points
+            )
+
+        def update(test_data):
+            point = PointStruct(
+                id=test_data["id"],
+                vector=test_data["vector"],
+                payload=test_data["payload"]
+            )
+            return self.qdrant_client.upsert(
+                collection_name=collection_name,
+                points=[point]
+            )
+
+        def delete(delete_id):
+            return self.qdrant_client.delete(
+                collection_name=collection_name,
+                points_selector=[delete_id]
+            )
+
+        return {
+            "single_search": single_search,
+            "batch_search": batch_search,
+            "filtered_search": filtered_search,
+            "retrieve_by_id": retrieve_by_id,
+            "single_insert": single_insert,
+            "batch_insert": batch_insert,
+            "update": update,
+            "delete": delete
+        }
+
+    def _get_postgres_operations(self):
+        """Get PostgreSQL-specific database operations"""
+        def single_search(query_vector):
+            conn = psycopg2.connect(**self.postgres_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata,
+                               1 - (embedding <=> %s::vector) AS similarity
+                        FROM vector_embeddings
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT 10;
+                    """, (query_vector, query_vector))
+                    return cur.fetchall()
+            finally:
+                conn.close()
+
+        def batch_search(query_vectors):
+            conn = psycopg2.connect(**self.postgres_config)
+            try:
+                results = []
+                with conn.cursor() as cur:
+                    for query_vector in query_vectors:
+                        cur.execute("""
+                            SELECT vector_id, text_content, metadata,
+                                   1 - (embedding <=> %s::vector) AS similarity
+                            FROM vector_embeddings
+                            ORDER BY embedding <=> %s::vector
+                            LIMIT 10;
+                        """, (query_vector, query_vector))
+                        results.append(cur.fetchall())
+                return results
+            finally:
+                conn.close()
+
+        def filtered_search(query_vector, filter_category):
+            conn = psycopg2.connect(**self.postgres_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata,
+                               1 - (embedding <=> %s::vector) AS similarity
+                        FROM vector_embeddings
+                        WHERE metadata->>'category' = %s
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT 10;
+                    """, (query_vector, filter_category, query_vector))
+                    return cur.fetchall()
+            finally:
+                conn.close()
+
+        def retrieve_by_id(ids):
+            conn = psycopg2.connect(**self.postgres_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata, embedding
+                        FROM vector_embeddings
+                        WHERE vector_id = ANY(%s);
+                    """, (ids,))
+                    return cur.fetchall()
+            finally:
+                conn.close()
+
+        def single_insert(test_data):
+            conn = psycopg2.connect(**self.postgres_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        VALUES (%s, %s::vector, %s, %s)
+                        ON CONFLICT (vector_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        text_content = EXCLUDED.text_content,
+                        metadata = EXCLUDED.metadata;
+                    """, (test_data["id"], test_data["vector"],
+                         test_data["payload"]["text_content"],
+                         json.dumps(test_data["payload"]["metadata"])))
+                    conn.commit()
+            finally:
+                conn.close()
+
+        def batch_insert(test_data_list):
+            conn = psycopg2.connect(**self.postgres_config)
+            try:
+                with conn.cursor() as cur:
+                    values = []
+                    for data in test_data_list:
+                        values.append(cur.mogrify("(%s, %s::vector, %s, %s)", (
+                            data["id"], data["vector"],
+                            data["payload"]["text_content"],
+                            json.dumps(data["payload"]["metadata"])
+                        )).decode('utf-8'))
+
+                    cur.execute(f"""
+                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        VALUES {', '.join(values)}
+                        ON CONFLICT (vector_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        text_content = EXCLUDED.text_content,
+                        metadata = EXCLUDED.metadata;
+                    """)
+                    conn.commit()
+            finally:
+                conn.close()
+
+        def update(test_data):
+            return single_insert(test_data)  # Upsert behavior
+
+        def delete(delete_id):
+            conn = psycopg2.connect(**self.postgres_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM vector_embeddings WHERE vector_id = %s;", (delete_id,))
+                    conn.commit()
+            finally:
+                conn.close()
+
+        return {
+            "single_search": single_search,
+            "batch_search": batch_search,
+            "filtered_search": filtered_search,
+            "retrieve_by_id": retrieve_by_id,
+            "single_insert": single_insert,
+            "batch_insert": batch_insert,
+            "update": update,
+            "delete": delete
+        }
+
+    def _get_timescaledb_operations(self):
+        """Get TimescaleDB-specific database operations (identical to PostgreSQL)"""
+        def single_search(query_vector):
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata,
+                               1 - (embedding <=> %s::vector) AS similarity
+                        FROM vector_embeddings
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT 10;
+                    """, (query_vector, query_vector))
+                    return cur.fetchall()
+            finally:
+                conn.close()
+
+        def batch_search(query_vectors):
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            try:
+                results = []
+                with conn.cursor() as cur:
+                    for query_vector in query_vectors:
+                        cur.execute("""
+                            SELECT vector_id, text_content, metadata,
+                                   1 - (embedding <=> %s::vector) AS similarity
+                            FROM vector_embeddings
+                            ORDER BY embedding <=> %s::vector
+                            LIMIT 10;
+                        """, (query_vector, query_vector))
+                        results.append(cur.fetchall())
+                return results
+            finally:
+                conn.close()
+
+        def filtered_search(query_vector, filter_category):
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata,
+                               1 - (embedding <=> %s::vector) AS similarity
+                        FROM vector_embeddings
+                        WHERE metadata->>'category' = %s
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT 10;
+                    """, (query_vector, filter_category, query_vector))
+                    return cur.fetchall()
+            finally:
+                conn.close()
+
+        def retrieve_by_id(ids):
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT vector_id, text_content, metadata, embedding
+                        FROM vector_embeddings
+                        WHERE vector_id = ANY(%s);
+                    """, (ids,))
+                    return cur.fetchall()
+            finally:
+                conn.close()
+
+        def single_insert(test_data):
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        VALUES (%s, %s::vector, %s, %s)
+                        ON CONFLICT (vector_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        text_content = EXCLUDED.text_content,
+                        metadata = EXCLUDED.metadata;
+                    """, (test_data["id"], test_data["vector"],
+                         test_data["payload"]["text_content"],
+                         json.dumps(test_data["payload"]["metadata"])))
+                    conn.commit()
+            finally:
+                conn.close()
+
+        def batch_insert(test_data_list):
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            try:
+                with conn.cursor() as cur:
+                    values = []
+                    for data in test_data_list:
+                        values.append(cur.mogrify("(%s, %s::vector, %s, %s)", (
+                            data["id"], data["vector"],
+                            data["payload"]["text_content"],
+                            json.dumps(data["payload"]["metadata"])
+                        )).decode('utf-8'))
+
+                    cur.execute(f"""
+                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        VALUES {', '.join(values)}
+                        ON CONFLICT (vector_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        text_content = EXCLUDED.text_content,
+                        metadata = EXCLUDED.metadata;
+                    """)
+                    conn.commit()
+            finally:
+                conn.close()
+
+        def update(test_data):
+            return single_insert(test_data)  # Upsert behavior
+
+        def delete(delete_id):
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM vector_embeddings WHERE vector_id = %s;", (delete_id,))
+                    conn.commit()
+            finally:
+                conn.close()
+
+        return {
+            "single_search": single_search,
+            "batch_search": batch_search,
+            "filtered_search": filtered_search,
+            "retrieve_by_id": retrieve_by_id,
+            "single_insert": single_insert,
+            "batch_insert": batch_insert,
+            "update": update,
+            "delete": delete
+        }
+
+    def _get_milvus_operations(self, collection_name: str):
+        """Get Milvus-specific database operations"""
+        if not MILVUS_AVAILABLE:
+            return None
+
+        # Create connection alias for this benchmark
+        connection_alias = f"milvus_benchmark_{collection_name}_{int(time.time())}"
+
+        def single_search(query_vector):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            collection.load()
+            results = collection.search(
+                data=[query_vector],
+                anns_field="vector",
+                param={"metric_type": "COSINE", "params": {"nprobe": 10}},
+                limit=10
+            )
+            connections.disconnect(connection_alias)
+            return results
+
+        def batch_search(query_vectors):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            collection.load()
+            results = collection.search(
+                data=query_vectors,
+                anns_field="vector",
+                param={"metric_type": "COSINE", "params": {"nprobe": 10}},
+                limit=10
+            )
+            connections.disconnect(connection_alias)
+            return results
+
+        def filtered_search(query_vector, filter_category):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            collection.load()
+            results = collection.search(
+                data=[query_vector],
+                anns_field="vector",
+                param={"metric_type": "COSINE", "params": {"nprobe": 10}},
+                limit=10,
+                expr=f'metadata like "%{filter_category}%"'  # Simplified filter
+            )
+            connections.disconnect(connection_alias)
+            return results
+
+        def retrieve_by_id(ids):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            results = collection.query(
+                expr=f"id in {ids}",
+                output_fields=["id", "text_content", "metadata", "vector"]
+            )
+            connections.disconnect(connection_alias)
+            return results
+
+        def single_insert(test_data):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            data = [
+                [test_data["vector"]],
+                [test_data["payload"]["text_content"]],
+                [json.dumps(test_data["payload"]["metadata"])]
+            ]
+            collection.insert(data)
+            collection.flush()
+            connections.disconnect(connection_alias)
+
+        def batch_insert(test_data_list):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            vectors = [data["vector"] for data in test_data_list]
+            texts = [data["payload"]["text_content"] for data in test_data_list]
+            metadata = [json.dumps(data["payload"]["metadata"]) for data in test_data_list]
+
+            data = [vectors, texts, metadata]
+            collection.insert(data)
+            collection.flush()
+            connections.disconnect(connection_alias)
+
+        def update(test_data):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            # Delete and re-insert (Milvus update pattern)
+            collection.delete(f"id == {test_data['id']}")
+            collection.flush()
+            single_insert(test_data)
+            connections.disconnect(connection_alias)
+
+        def delete(delete_id):
+            connections.connect(alias=connection_alias, host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using=connection_alias)
+            collection.delete(f"id == {delete_id}")
+            collection.flush()
+            connections.disconnect(connection_alias)
+
+        return {
+            "single_search": single_search,
+            "batch_search": batch_search,
+            "filtered_search": filtered_search,
+            "retrieve_by_id": retrieve_by_id,
+            "single_insert": single_insert,
+            "batch_insert": batch_insert,
+            "update": update,
+            "delete": delete
+        }
+
+    def _get_weaviate_operations(self, class_name: str):
+        """Get Weaviate-specific database operations"""
+        if not WEAVIATE_AVAILABLE:
+            return None
+
+        def single_search(query_vector):
+            client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+            try:
+                collection = client.collections.get(class_name)
+                result = collection.query.near_vector(
+                    near_vector=query_vector,
+                    limit=10,
+                    return_metadata=["distance"]
+                )
+                return result
+            finally:
+                client.close()
+
+        def batch_search(query_vectors):
+            client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+            try:
+                collection = client.collections.get(class_name)
+                results = []
+                for query_vector in query_vectors:
+                    result = collection.query.near_vector(
+                        near_vector=query_vector,
+                        limit=10,
+                        return_metadata=["distance"]
+                    )
+                    results.append(result)
+                return results
+            finally:
+                client.close()
+
+        def filtered_search(query_vector, filter_category):
+            # Simplified - Weaviate filtering is more complex
+            return single_search(query_vector)
+
+        def retrieve_by_id(ids):
+            client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+            try:
+                collection = client.collections.get(class_name)
+                results = []
+                for doc_id in ids:
+                    try:
+                        result = collection.query.fetch_object_by_id(f"doc_{doc_id}")
+                        results.append(result)
+                    except:
+                        pass
+                return results
+            finally:
+                client.close()
+
+        def single_insert(test_data):
+            client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+            try:
+                collection = client.collections.get(class_name)
+                data_object = {
+                    "text_content": test_data["payload"]["text_content"],
+                    "metadata": json.dumps(test_data["payload"]["metadata"])
+                }
+                collection.data.insert(properties=data_object, vector=test_data["vector"])
+            finally:
+                client.close()
+
+        def batch_insert(test_data_list):
+            client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+            try:
+                collection = client.collections.get(class_name)
+                data_objects = []
+                for data in test_data_list:
+                    data_objects.append(wvc.data.DataObject(
+                        properties={
+                            "text_content": data["payload"]["text_content"],
+                            "metadata": json.dumps(data["payload"]["metadata"])
+                        },
+                        vector=data["vector"]
+                    ))
+                collection.data.insert_many(data_objects)
+            finally:
+                client.close()
+
+        def update(test_data):
+            client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+            try:
+                collection = client.collections.get(class_name)
+                # Delete and re-insert
+                try:
+                    collection.data.delete_by_id(f"doc_{test_data['id']}")
+                except:
+                    pass
+                single_insert(test_data)
+            finally:
+                client.close()
+
+        def delete(delete_id):
+            client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+            try:
+                collection = client.collections.get(class_name)
+                try:
+                    collection.data.delete_by_id(f"doc_{delete_id}")
+                except:
+                    pass  # Ignore if doesn't exist
+            finally:
+                client.close()
+
+        return {
+            "single_search": single_search,
+            "batch_search": batch_search,
+            "filtered_search": filtered_search,
+            "retrieve_by_id": retrieve_by_id,
+            "single_insert": single_insert,
+            "batch_insert": batch_insert,
+            "update": update,
+            "delete": delete
+        }
+
+    # ==================== ORIGINAL READ BENCHMARKS (DEPRECATED) ====================
+
     def run_read_benchmark(self, collection_name: str, iterations: int = 100):
         """Run comprehensive Qdrant performance benchmark (read and write operations)"""
-        print(f"\n{'='*60}")
+        print(f"{'='*60}")
         print(f"QDRANT BENCHMARK - Collection: {collection_name}")
         print(f"{'='*60}")
         
@@ -160,7 +1011,7 @@ class ComprehensiveBenchmarkSuite:
         read_results = {}
         
         # 1. Single Search Performance
-        print("\n1. Single Search Performance")
+        print("1. Single Search Performance")
         single_search_times = []
         for _ in tqdm(range(iterations), desc="Single searches"):
             query_vector = self.generate_query_vector()
@@ -183,7 +1034,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 2. Batch Search Performance
-        print("\n2. Batch Search Performance")
+        print("2. Batch Search Performance")
         batch_search_times = []
         batch_iterations = max(1, iterations // 10)
         for _ in tqdm(range(batch_iterations), desc="Batch searches"):
@@ -206,7 +1057,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 3. Filtered Search Performance
-        print("\n3. Filtered Search Performance")
+        print("3. Filtered Search Performance")
         filtered_search_times = []
         categories = ["A", "B", "C", "D"]
         for _ in tqdm(range(iterations), desc="Filtered searches"):
@@ -238,7 +1089,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 4. ID Retrieval Performance
-        print("\n4. ID Retrieval Performance")
+        print("4. ID Retrieval Performance")
         retrieve_times = []
         point_ids = [np.random.randint(0, collection_info.points_count) for _ in range(10)]
         for _ in tqdm(range(iterations), desc="ID retrievals"):
@@ -261,7 +1112,7 @@ class ComprehensiveBenchmarkSuite:
         
         # 5. Concurrent Search Performance
         concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
-        print(f"\n5. Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
+        print(f"5. Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
         def single_search():
             query_vector = self.generate_query_vector()
             start_time = time.time()
@@ -289,7 +1140,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 6. Single Insert Performance
-        print("\n6. Single Insert Performance")
+        print("6. Single Insert Performance")
         single_insert_times = []
         for _ in tqdm(range(iterations), desc="Single inserts"):
             point = self.generate_test_point(self.next_id)
@@ -313,7 +1164,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 7. Batch Insert Performance (100 records)
-        print("\n7. Batch Insert Performance")
+        print("7. Batch Insert Performance")
         batch_insert_times = []
         batch_size = 100
         batch_iterations = max(1, iterations // 10)
@@ -341,7 +1192,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 8. Update Performance
-        print("\n8. Update Performance")
+        print("8. Update Performance")
         update_times = []
         for _ in tqdm(range(iterations), desc="Update operations"):
             point_id = np.random.randint(0, self.next_id - 1) if self.next_id > 1 else 0
@@ -365,7 +1216,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 9. Delete Performance
-        print("\n9. Delete Performance")
+        print("9. Delete Performance")
         delete_times = []
         try:
             collection_info = self.qdrant_client.get_collection(collection_name)
@@ -397,7 +1248,7 @@ class ComprehensiveBenchmarkSuite:
     
     def run_write_benchmark(self, collection_name: str, iterations: int = 100, cleanup: bool = True):
         """Run comprehensive write performance benchmark"""
-        print(f"\n{'='*60}")
+        print(f"{'='*60}")
         print(f"WRITE BENCHMARK - Collection: {collection_name}")
         print(f"{'='*60}")
         
@@ -417,7 +1268,7 @@ class ComprehensiveBenchmarkSuite:
         self.next_id = 0
         
         # 1. Single Point Insertions
-        print("\n1. Single Point Insertions")
+        print("1. Single Point Insertions")
         single_insert_times = []
         for _ in tqdm(range(iterations), desc="Single inserts"):
             point = self.generate_test_point(self.next_id)
@@ -443,7 +1294,7 @@ class ComprehensiveBenchmarkSuite:
         # 2. Batch Insertions
         batch_sizes = [10, 100, 1000]
         for batch_size in batch_sizes:
-            print(f"\n2. Batch Insertions (batch size: {batch_size})")
+            print(f"2. Batch Insertions (batch size: {batch_size})")
             batch_insert_times = []
             num_batches = max(1, iterations // batch_size)
             
@@ -472,7 +1323,7 @@ class ComprehensiveBenchmarkSuite:
         # 3. Concurrent Insertions
         concurrent_batches = max(5, iterations // 2)  # At least 5 batches for meaningful concurrent testing
         batch_size = 100
-        print(f"\n3. Concurrent Insertions (10 workers, {concurrent_batches} batches, batch size {batch_size})")
+        print(f"3. Concurrent Insertions (10 workers, {concurrent_batches} batches, batch size {batch_size})")
         def batch_insert():
             points = [self.generate_test_point(self.next_id + i) for i in range(batch_size)]
             self.next_id += batch_size
@@ -500,7 +1351,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 4. Update Operations
-        print("\n4. Update Operations")
+        print("4. Update Operations")
         update_times = []
         for _ in tqdm(range(iterations), desc="Update operations"):
             point_id = np.random.randint(0, self.next_id - 1)
@@ -524,7 +1375,7 @@ class ComprehensiveBenchmarkSuite:
         }
         
         # 5. Delete Operations
-        print("\n5. Delete Operations")
+        print("5. Delete Operations")
         delete_times = []
         try:
             collection_info = self.qdrant_client.get_collection(collection_name)
@@ -558,7 +1409,7 @@ class ComprehensiveBenchmarkSuite:
     
     def run_postgres_benchmark(self, iterations: int = 100):
         """Run PostgreSQL search and insert benchmarks"""
-        print(f"\n{'='*60}")
+        print(f"{'='*60}")
         print(f"POSTGRESQL BENCHMARK")
         print(f"{'='*60}")
         
@@ -575,7 +1426,7 @@ class ComprehensiveBenchmarkSuite:
                 print(f"Vector Dimension: {self.vector_dim}")
             
             # Search performance
-            print("\n1. PostgreSQL Search Performance")
+            print("1. PostgreSQL Search Performance")
             search_times = []
             for _ in tqdm(range(iterations), desc="PostgreSQL searches"):
                 query_vector = self.generate_query_vector()
@@ -602,7 +1453,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Batch search performance
-            print("\n2. PostgreSQL Batch Search Performance")
+            print("2. PostgreSQL Batch Search Performance")
             batch_search_times = []
             batch_iterations = max(1, iterations // 10)
             for _ in tqdm(range(batch_iterations), desc="PostgreSQL batch searches"):
@@ -626,7 +1477,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Filtered search performance
-            print("\n3. PostgreSQL Filtered Search Performance")
+            print("3. PostgreSQL Filtered Search Performance")
             filtered_search_times = []
             for _ in tqdm(range(iterations), desc="PostgreSQL filtered searches"):
                 query_vector = self.generate_query_vector()
@@ -649,7 +1500,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # ID retrieval performance
-            print("\n4. PostgreSQL ID Retrieval Performance")
+            print("4. PostgreSQL ID Retrieval Performance")
             id_retrieval_times = []
             for _ in tqdm(range(iterations), desc="PostgreSQL ID retrievals"):
                 # Get random IDs from the database
@@ -673,7 +1524,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Concurrent search performance
-            print(f"\n5. PostgreSQL Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
+            print(f"5. PostgreSQL Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             concurrent_search_times = []
             def postgres_search_worker():
                 query_vector = self.generate_query_vector()
@@ -705,7 +1556,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Insert performance
-            print("\n6. PostgreSQL Insert Performance")
+            print("6. PostgreSQL Insert Performance")
             insert_times = []
             
             # Get the current max ID to avoid conflicts
@@ -737,7 +1588,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Batch insert performance
-            print("\n7. PostgreSQL Batch Insert Performance")
+            print("7. PostgreSQL Batch Insert Performance")
             batch_insert_times = []
             
             # Get the current max ID to avoid conflicts
@@ -769,7 +1620,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Update performance
-            print("\n8. PostgreSQL Update Performance")
+            print("8. PostgreSQL Update Performance")
             update_times = []
             
             for i in tqdm(range(iterations), desc="PostgreSQL updates"):
@@ -795,7 +1646,7 @@ class ComprehensiveBenchmarkSuite:
             }
             
             # Delete performance
-            print("\n9. PostgreSQL Delete Performance")
+            print("9. PostgreSQL Delete Performance")
             delete_times = []
             
             for i in tqdm(range(iterations), desc="PostgreSQL deletes"):
@@ -827,7 +1678,7 @@ class ComprehensiveBenchmarkSuite:
     
     def run_database_comparison(self, qdrant_collection: str, iterations: int = 100):
         """Run direct comparison between Qdrant and PostgreSQL"""
-        print(f"\n{'='*60}")
+        print(f"{'='*60}")
         print(f"DATABASE COMPARISON")
         print(f"{'='*60}")
         
@@ -887,7 +1738,7 @@ class ComprehensiveBenchmarkSuite:
     
     def run_load_test(self, collection_name: str, write_collection_name: str, duration: int = 120):
         """Run load test for specified duration"""
-        print(f"\n{'='*60}")
+        print(f"{'='*60}")
         print(f"LOAD TEST ({duration} seconds) - Collection: {collection_name}")
         print(f"{'='*60}")
         
@@ -967,7 +1818,7 @@ class ComprehensiveBenchmarkSuite:
     
     def run_postgres_ts_benchmark(self, iterations: int = 100):
         """Run TimescaleDB benchmark (read and write operations)"""
-        print(f"\n{'='*60}")
+        print(f"{'='*60}")
         print("TIMESCALEDB BENCHMARK")
         print(f"{'='*60}")
         
@@ -991,7 +1842,7 @@ class ComprehensiveBenchmarkSuite:
         test_vectors = [np.random.rand(self.vector_dim).astype(np.float32).tolist() for _ in range(10)]
         
         # 1. TimescaleDB Search Performance
-        print(f"\n1. TimescaleDB Search Performance")
+        print(f"1. TimescaleDB Search Performance")
         search_times = []
         for i in tqdm(range(iterations), desc="TimescaleDB searches"):
             start_time = time.time()
@@ -1014,7 +1865,7 @@ class ComprehensiveBenchmarkSuite:
                 search_times.append(float('inf'))
         
         # 2. TimescaleDB Batch Search Performance
-        print(f"\n2. TimescaleDB Batch Search Performance")
+        print(f"2. TimescaleDB Batch Search Performance")
         batch_search_times = []
         batch_iterations = max(1, iterations // 10)
         for i in tqdm(range(batch_iterations), desc="TimescaleDB batch searches"):
@@ -1040,7 +1891,7 @@ class ComprehensiveBenchmarkSuite:
                 batch_search_times.append(float('inf'))
         
         # 3. TimescaleDB Filtered Search Performance
-        print(f"\n3. TimescaleDB Filtered Search Performance")
+        print(f"3. TimescaleDB Filtered Search Performance")
         filtered_search_times = []
         for i in tqdm(range(iterations), desc="TimescaleDB filtered searches"):
             start_time = time.time()
@@ -1064,7 +1915,7 @@ class ComprehensiveBenchmarkSuite:
                 filtered_search_times.append(float('inf'))
         
         # 4. TimescaleDB ID Retrieval Performance
-        print(f"\n4. TimescaleDB ID Retrieval Performance")
+        print(f"4. TimescaleDB ID Retrieval Performance")
         id_retrieval_times = []
         for i in tqdm(range(iterations), desc="TimescaleDB ID retrievals"):
             start_time = time.time()
@@ -1092,7 +1943,7 @@ class ComprehensiveBenchmarkSuite:
         
         # 5. TimescaleDB Concurrent Search Performance
         concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
-        print(f"\n5. TimescaleDB Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
+        print(f"5. TimescaleDB Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
         concurrent_search_times = []
         
         def timescaledb_search_worker():
@@ -1122,7 +1973,7 @@ class ComprehensiveBenchmarkSuite:
                 concurrent_search_times.append(time.time() - start_time)
         
         # 6. TimescaleDB Insert Performance
-        print(f"\n6. TimescaleDB Insert Performance")
+        print(f"6. TimescaleDB Insert Performance")
         insert_times = []
         for i in tqdm(range(iterations), desc="TimescaleDB inserts"):
             start_time = time.time()
@@ -1147,7 +1998,7 @@ class ComprehensiveBenchmarkSuite:
                 insert_times.append(float('inf'))
         
         # 7. TimescaleDB Batch Insert Performance
-        print(f"\n7. TimescaleDB Batch Insert Performance")
+        print(f"7. TimescaleDB Batch Insert Performance")
         batch_insert_times = []
         batch_iterations = max(1, iterations // 10)
         for i in tqdm(range(batch_iterations), desc="TimescaleDB batch inserts"):
@@ -1183,7 +2034,7 @@ class ComprehensiveBenchmarkSuite:
                 batch_insert_times.append(float('inf'))
         
         # 8. TimescaleDB Update Performance
-        print(f"\n8. TimescaleDB Update Performance")
+        print(f"8. TimescaleDB Update Performance")
         update_times = []
         for i in tqdm(range(iterations), desc="TimescaleDB updates"):
             start_time = time.time()
@@ -1210,7 +2061,7 @@ class ComprehensiveBenchmarkSuite:
                 update_times.append(float('inf'))
         
         # 9. TimescaleDB Delete Performance
-        print(f"\n9. TimescaleDB Delete Performance")
+        print(f"9. TimescaleDB Delete Performance")
         delete_times = []
         for i in tqdm(range(iterations), desc="TimescaleDB deletes"):
             start_time = time.time()
@@ -1310,7 +2161,7 @@ class ComprehensiveBenchmarkSuite:
             collection.load()
             
             # Single search benchmark
-            print("\n1. Milvus Single Search Performance")
+            print("1. Milvus Single Search Performance")
             single_search_times = []
             for _ in tqdm(range(iterations), desc="Milvus single searches"):
                 query_vector = self.generate_query_vector()
@@ -1328,7 +2179,7 @@ class ComprehensiveBenchmarkSuite:
                 single_search_times.append(end_time - start_time)
             
             # Batch search benchmark
-            print("\n2. Milvus Batch Search Performance")
+            print("2. Milvus Batch Search Performance")
             batch_search_times = []
             batch_iterations = max(1, iterations // 10)
             for _ in tqdm(range(batch_iterations), desc="Milvus batch searches"):
@@ -1347,7 +2198,7 @@ class ComprehensiveBenchmarkSuite:
                 batch_search_times.append(end_time - start_time)
             
             # Filtered search benchmark
-            print("\n3. Milvus Filtered Search Performance")
+            print("3. Milvus Filtered Search Performance")
             filtered_search_times = []
             for _ in tqdm(range(iterations), desc="Milvus filtered searches"):
                 query_vector = self.generate_query_vector()
@@ -1366,7 +2217,7 @@ class ComprehensiveBenchmarkSuite:
                 filtered_search_times.append(end_time - start_time)
             
             # ID retrieval benchmark
-            print("\n4. Milvus ID Retrieval Performance")
+            print("4. Milvus ID Retrieval Performance")
             id_retrieval_times = []
             for _ in tqdm(range(iterations), desc="Milvus ID retrievals"):
                 # Get random IDs from the collection
@@ -1384,7 +2235,7 @@ class ComprehensiveBenchmarkSuite:
             
             # Concurrent search benchmark
             concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
-            print(f"\n5. Milvus Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
+            print(f"5. Milvus Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def milvus_search_worker():
                 query_vector = self.generate_query_vector()
                 start_time = time.time()
@@ -1409,7 +2260,7 @@ class ComprehensiveBenchmarkSuite:
                         concurrent_search_times.append(1.0)  # Add default time
             
             # Single insert benchmark
-            print("\n6. Milvus Single Insert Performance")
+            print("6. Milvus Single Insert Performance")
             single_insert_times = []
             # Use timestamp-based ID to avoid conflicts
             base_id = int(time.time() * 1000)  # Use milliseconds since epoch
@@ -1432,7 +2283,7 @@ class ComprehensiveBenchmarkSuite:
                 single_insert_times.append(end_time - start_time)
             
             # Batch insert benchmark
-            print("\n7. Milvus Batch Insert Performance")
+            print("7. Milvus Batch Insert Performance")
             batch_insert_times = []
             base_id = int(time.time() * 1000) + 100000  # Use different base ID
             batch_iterations = max(1, iterations // 10)
@@ -1452,7 +2303,7 @@ class ComprehensiveBenchmarkSuite:
                 batch_insert_times.append(end_time - start_time)
             
             # Update benchmark
-            print("\n8. Milvus Update Performance")
+            print("8. Milvus Update Performance")
             update_times = []
             for i in tqdm(range(iterations), desc="Milvus updates"):
                 # Get a random existing record
@@ -1477,7 +2328,7 @@ class ComprehensiveBenchmarkSuite:
                 update_times.append(end_time - start_time)
             
             # Delete benchmark
-            print("\n9. Milvus Delete Performance")
+            print("9. Milvus Delete Performance")
             delete_times = []
             for i in tqdm(range(iterations), desc="Milvus deletes"):
                 # Get a random existing record
@@ -1563,7 +2414,7 @@ class ComprehensiveBenchmarkSuite:
             collection = client.collections.get(class_name)
             
             # Single search benchmark
-            print("\n1. Weaviate Single Search Performance")
+            print("1. Weaviate Single Search Performance")
             single_search_times = []
             for _ in tqdm(range(iterations), desc="Weaviate single searches"):
                 query_vector = self.generate_query_vector()
@@ -1580,7 +2431,7 @@ class ComprehensiveBenchmarkSuite:
                 single_search_times.append(end_time - start_time)
             
             # Batch search benchmark
-            print("\n2. Weaviate Batch Search Performance")
+            print("2. Weaviate Batch Search Performance")
             batch_search_times = []
             batch_iterations = max(1, iterations // 10)
             for _ in tqdm(range(batch_iterations), desc="Weaviate batch searches"):
@@ -1599,7 +2450,7 @@ class ComprehensiveBenchmarkSuite:
                 batch_search_times.append(end_time - start_time)
             
             # Filtered search benchmark
-            print("\n3. Weaviate Filtered Search Performance")
+            print("3. Weaviate Filtered Search Performance")
             filtered_search_times = []
             for _ in tqdm(range(iterations), desc="Weaviate filtered searches"):
                 query_vector = self.generate_query_vector()
@@ -1616,7 +2467,7 @@ class ComprehensiveBenchmarkSuite:
                 filtered_search_times.append(end_time - start_time)
             
             # ID retrieval benchmark
-            print("\n4. Weaviate ID Retrieval Performance")
+            print("4. Weaviate ID Retrieval Performance")
             id_retrieval_times = []
             for _ in tqdm(range(iterations), desc="Weaviate ID retrievals"):
                 # Get random IDs from the collection
@@ -1635,7 +2486,7 @@ class ComprehensiveBenchmarkSuite:
             
             # Concurrent search benchmark
             concurrent_queries = max(10, iterations)  # At least 10 queries for meaningful concurrent testing
-            print(f"\n5. Weaviate Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
+            print(f"5. Weaviate Concurrent Search Performance ({concurrent_queries} queries, 10 workers)")
             def weaviate_search_worker():
                 query_vector = self.generate_query_vector()
                 start_time = time.time()
@@ -1664,7 +2515,7 @@ class ComprehensiveBenchmarkSuite:
                 concurrent_search_times = [1.0] * concurrent_queries  # Add default times
             
             # Single insert benchmark
-            print("\n6. Weaviate Single Insert Performance")
+            print("6. Weaviate Single Insert Performance")
             single_insert_times = []
             # Use timestamp-based ID to avoid conflicts
             base_id = int(time.time() * 1000)  # Use milliseconds since epoch
@@ -1689,7 +2540,7 @@ class ComprehensiveBenchmarkSuite:
                 single_insert_times.append(end_time - start_time)
             
             # Batch insert benchmark
-            print("\n7. Weaviate Batch Insert Performance")
+            print("7. Weaviate Batch Insert Performance")
             batch_insert_times = []
             base_id = int(time.time() * 1000) + 100000  # Use different base ID
             batch_iterations = max(1, iterations // 10)
@@ -1715,7 +2566,7 @@ class ComprehensiveBenchmarkSuite:
                 batch_insert_times.append(end_time - start_time)
             
             # Update benchmark
-            print("\n8. Weaviate Update Performance")
+            print("8. Weaviate Update Performance")
             update_times = []
             for i in tqdm(range(iterations), desc="Weaviate updates"):
                 # Get a random existing record
@@ -1744,7 +2595,7 @@ class ComprehensiveBenchmarkSuite:
                 update_times.append(end_time - start_time)
             
             # Delete benchmark
-            print("\n9. Weaviate Delete Performance")
+            print("9. Weaviate Delete Performance")
             delete_times = []
             for i in tqdm(range(iterations), desc="Weaviate deletes"):
                 # Get a random existing record
@@ -1844,7 +2695,7 @@ class ComprehensiveBenchmarkSuite:
         
         # Get system info
         system_info = self.get_system_info()
-        print(f"\nSystem Info:")
+        print(f"System Info:")
         print(f"CPU Cores: {system_info['cpu_count']}")
         print(f"Memory: {system_info['memory_total'] / (1024**3):.2f} GB")
         print(f"Available Memory: {system_info['memory_available'] / (1024**3):.2f} GB")
@@ -1873,43 +2724,43 @@ class ComprehensiveBenchmarkSuite:
             
             # 1. Run Weaviate benchmark
             if run_weaviate:
-                print("\n" + "="*60)
-                print("RUNNING WEAVIATE BENCHMARK (1/5)")
+                print("" + "="*60)
+                print("RUNNING WEAVIATE STANDARDIZED BENCHMARK (1/5)")
                 print("="*60)
-                results["weaviate_benchmark"] = self.run_weaviate_benchmark("TestVectors", iterations)
-            
+                results["weaviate_benchmark"] = self.run_standardized_benchmark("weaviate", "TestVectors", iterations)
+
             # 2. Run Qdrant benchmark (unified read and write)
             if run_read or run_write:
-                print("\n" + "="*60)
-                print("RUNNING QDRANT BENCHMARK (2/5)")
+                print("" + "="*60)
+                print("RUNNING QDRANT STANDARDIZED BENCHMARK (2/5)")
                 print("="*60)
-                results["qdrant_benchmark"] = self.run_read_benchmark(read_collection, iterations)
-            
+                results["qdrant_benchmark"] = self.run_standardized_benchmark("qdrant", read_collection, iterations)
+
             # 3. Run Milvus benchmark
             if run_milvus:
-                print("\n" + "="*60)
-                print("RUNNING MILVUS BENCHMARK (3/5)")
+                print("" + "="*60)
+                print("RUNNING MILVUS STANDARDIZED BENCHMARK (3/5)")
                 print("="*60)
-                results["milvus_benchmark"] = self.run_milvus_benchmark(read_collection, iterations)
-            
+                results["milvus_benchmark"] = self.run_standardized_benchmark("milvus", read_collection, iterations)
+
             # 4. Run TimescaleDB benchmark
             if run_postgres_ts:
-                print("\n" + "="*60)
-                print("RUNNING TIMESCALEDB BENCHMARK (4/5)")
+                print("" + "="*60)
+                print("RUNNING TIMESCALEDB STANDARDIZED BENCHMARK (4/5)")
                 print("="*60)
-                results["postgres_ts_benchmark"] = self.run_postgres_ts_benchmark(iterations)
-            
+                results["postgres_ts_benchmark"] = self.run_standardized_benchmark("timescaledb", read_collection, iterations)
+
             # 5. Run PostgreSQL benchmark
             if run_postgres:
-                print("\n" + "="*60)
-                print("RUNNING POSTGRESQL BENCHMARK (5/5)")
+                print("" + "="*60)
+                print("RUNNING POSTGRESQL STANDARDIZED BENCHMARK (5/5)")
                 print("="*60)
-                results["postgres_benchmark"] = self.run_postgres_benchmark(iterations)
+                results["postgres_benchmark"] = self.run_standardized_benchmark("postgresql", read_collection, iterations)
             
             # Run database comparison (after all individual benchmarks)
             if run_comparison:
                 try:
-                    print("\n" + "="*60)
+                    print("" + "="*60)
                     print("RUNNING DATABASE COMPARISON")
                     print("="*60)
                     results["database_comparison"] = self.run_database_comparison(read_collection, iterations)
@@ -1919,7 +2770,7 @@ class ComprehensiveBenchmarkSuite:
             
             # Run load test (final test)
             if run_load_test:
-                print("\n" + "="*60)
+                print("" + "="*60)
                 print("RUNNING LOAD TEST")
                 print("="*60)
                 results["load_test"] = self.run_load_test(read_collection, write_collection, load_duration)
@@ -1935,12 +2786,12 @@ class ComprehensiveBenchmarkSuite:
     
     def print_summary(self, results):
         """Print benchmark summary"""
-        print("\n" + "="*80)
+        print("" + "="*80)
         print("BENCHMARK SUMMARY")
         print("="*80)
         
         if results.get("qdrant_benchmark"):
-            print("\nQDRANT PERFORMANCE:")
+            print("QDRANT PERFORMANCE:")
             qdrant_results = results["qdrant_benchmark"]
             for operation, stats in qdrant_results.items():
                 if 'qps' in stats:
@@ -1952,7 +2803,7 @@ class ComprehensiveBenchmarkSuite:
                         print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} ops/sec")
         
         if results["postgres_benchmark"]:
-            print("\nPOSTGRESQL PERFORMANCE:")
+            print("POSTGRESQL PERFORMANCE:")
             postgres_results = results["postgres_benchmark"]
             for operation, stats in postgres_results.items():
                 if 'qps' in stats:
@@ -1961,7 +2812,7 @@ class ComprehensiveBenchmarkSuite:
                     print(f"  {operation}: {stats['mean']:.4f}s mean, {stats['throughput']:.2f} ops/sec")
         
         if results["database_comparison"] and "ratios" in results["database_comparison"]:
-            print("\nDATABASE COMPARISON:")
+            print("DATABASE COMPARISON:")
             ratios = results["database_comparison"]["ratios"]
             for metric, ratio in ratios.items():
                 if 'search' in metric:
@@ -1970,14 +2821,14 @@ class ComprehensiveBenchmarkSuite:
                     print(f"  Insert Performance: Qdrant is {ratio['qdrant_vs_postgres']:.1f}x {'faster' if ratio['qdrant_vs_postgres'] > 1 else 'slower'}")
         
         if results["load_test"]:
-            print("\nLOAD TEST RESULTS:")
+            print("LOAD TEST RESULTS:")
             load_stats = results["load_test"]
             print(f"  CPU Usage: {load_stats['cpu_usage']['mean']:.1f}% mean, {load_stats['cpu_usage']['max']:.1f}% max")
             print(f"  Memory Usage: {load_stats['memory_usage']['mean']:.1f}% mean, {load_stats['memory_usage']['max']:.1f}% max")
         
         # New database performance summaries
         if results["milvus_benchmark"]:
-            print("\nMILVUS PERFORMANCE:")
+            print("MILVUS PERFORMANCE:")
             milvus_results = results["milvus_benchmark"]
             if "error" in milvus_results:
                 print(f"  Error: {milvus_results['error']}")
@@ -1986,7 +2837,7 @@ class ComprehensiveBenchmarkSuite:
                 print(f"  Insert: {milvus_results['single_insert']['mean']:.4f}s mean, {milvus_results['single_insert']['throughput']:.2f} ops/sec")
         
         if results["weaviate_benchmark"]:
-            print("\nWEAVIATE PERFORMANCE:")
+            print("WEAVIATE PERFORMANCE:")
             weaviate_results = results["weaviate_benchmark"]
             if "error" in weaviate_results:
                 print(f"  Error: {weaviate_results['error']}")
@@ -2002,7 +2853,7 @@ class ComprehensiveBenchmarkSuite:
     
     def print_performance_comparison_summary(self, results):
         """Print comprehensive performance comparison across all databases"""
-        print("\n" + "="*80)
+        print("" + "="*80)
         print("COMPREHENSIVE DATABASE PERFORMANCE COMPARISON")
         print("="*80)
         
@@ -2027,7 +2878,7 @@ class ComprehensiveBenchmarkSuite:
             print("Insufficient data for performance comparison (need at least 2 databases)")
             return
         
-        print("\n🔍 SEARCH PERFORMANCE COMPARISON:")
+        print("🔍 SEARCH PERFORMANCE COMPARISON:")
         print("-" * 50)
         
         # Collect search performance data from all databases
@@ -2091,11 +2942,11 @@ class ComprehensiveBenchmarkSuite:
             # Show performance ratios
             if len(search_data) >= 2:
                 fastest = search_data[0]
-                print(f"\n  🏆 {fastest['name']} is {fastest['qps']/search_data[-1]['qps']:.1f}x faster than {search_data[-1]['name']}")
+                print(f"  🏆 {fastest['name']} is {fastest['qps']/search_data[-1]['qps']:.1f}x faster than {search_data[-1]['name']}")
         
         # Additional Qdrant-specific features
         if qdrant_benchmark:
-            print(f"\nQdrant Advanced Features:")
+            print(f"Qdrant Advanced Features:")
             if "batch_search" in qdrant_benchmark:
                 print(f"  • Batch Search: {qdrant_benchmark['batch_search']['qps']:.1f} QPS")
             if "filtered_search" in qdrant_benchmark:
@@ -2105,7 +2956,7 @@ class ComprehensiveBenchmarkSuite:
             if "concurrent_search" in qdrant_benchmark:
                 print(f"  • Concurrent Search: {qdrant_benchmark['concurrent_search']['qps']:.1f} QPS")
         
-        print("\n✏️  WRITE PERFORMANCE COMPARISON:")
+        print("✏️  WRITE PERFORMANCE COMPARISON:")
         print("-" * 50)
         
         # Collect write performance data from all databases
@@ -2169,11 +3020,11 @@ class ComprehensiveBenchmarkSuite:
             # Show performance ratios
             if len(write_data) >= 2:
                 fastest = write_data[0]
-                print(f"\n  🏆 {fastest['name']} is {fastest['ops_per_sec']/write_data[-1]['ops_per_sec']:.1f}x faster than {write_data[-1]['name']}")
+                print(f"  🏆 {fastest['name']} is {fastest['ops_per_sec']/write_data[-1]['ops_per_sec']:.1f}x faster than {write_data[-1]['name']}")
         
         # Additional Qdrant-specific write features
         if qdrant_benchmark:
-            print(f"\nQdrant Advanced Write Features:")
+            print(f"Qdrant Advanced Write Features:")
             if "batch_insert_100" in qdrant_benchmark:
                 print(f"  • Batch Insert (100 points): {qdrant_benchmark['batch_insert_100']['throughput']:.1f} points/sec")
             if "update" in qdrant_benchmark:
@@ -2181,7 +3032,7 @@ class ComprehensiveBenchmarkSuite:
             if "delete" in qdrant_benchmark:
                 print(f"  • Delete Operations: {qdrant_benchmark['delete']['throughput']:.1f} ops/sec")
         
-        print("\n📊 OVERALL PERFORMANCE INSIGHTS:")
+        print("📊 OVERALL PERFORMANCE INSIGHTS:")
         print("-" * 50)
         
         # Database performance summary
@@ -2197,7 +3048,7 @@ class ComprehensiveBenchmarkSuite:
         # Performance rankings
         if search_data:
             fastest_search = search_data[0]
-            print(f"\n🏆 Search Performance Winner: {fastest_search['name']} ({fastest_search['qps']:.1f} QPS)")
+            print(f"🏆 Search Performance Winner: {fastest_search['name']} ({fastest_search['qps']:.1f} QPS)")
         
         if write_data:
             fastest_write = write_data[0]
@@ -2207,14 +3058,14 @@ class ComprehensiveBenchmarkSuite:
         if qdrant_benchmark:
             if "concurrent_search" in qdrant_benchmark:
                 concurrent_qps = qdrant_benchmark["concurrent_search"]["qps"]
-                print(f"\n• Qdrant Concurrent Search: {concurrent_qps:.1f} QPS under load")
+                print(f"• Qdrant Concurrent Search: {concurrent_qps:.1f} QPS under load")
         
         # Memory and CPU insights
         if results.get("load_test"):
             load_stats = results["load_test"]
-            print(f"\n• System Load: {load_stats['cpu_usage']['mean']:.1f}% CPU, {load_stats['memory_usage']['mean']:.1f}% Memory during sustained load")
+            print(f"• System Load: {load_stats['cpu_usage']['mean']:.1f}% CPU, {load_stats['memory_usage']['mean']:.1f}% Memory during sustained load")
         
-        print("\n💡 RECOMMENDATIONS:")
+        print("💡 RECOMMENDATIONS:")
         print("-" * 50)
         
         # Database-specific recommendations based on performance
@@ -2288,7 +3139,7 @@ class ComprehensiveBenchmarkSuite:
     
     def print_summary_table(self, results):
         """Print a comprehensive summary table of all database performance metrics"""
-        print("\n" + "="*120)
+        print("" + "="*120)
         print("COMPREHENSIVE PERFORMANCE SUMMARY TABLE")
         print("="*120)
         
@@ -2419,7 +3270,7 @@ class ComprehensiveBenchmarkSuite:
                 width = column_widths[i]
                 if metric in ['Database', 'Type']:
                     formatted_row.append(f"{row[metric]:<{width}}")
-            else:
+                else:
                     try:
                         value = int(row[metric])
                         if value == best_values[metric] and value > 0:
@@ -2432,7 +3283,7 @@ class ComprehensiveBenchmarkSuite:
             print(" ".join(formatted_row))
         
         # Add performance rankings
-        print("\n" + "="*80)
+        print("" + "="*80)
         print("PERFORMANCE RANKINGS")
         print("="*80)
         
@@ -2444,7 +3295,7 @@ class ComprehensiveBenchmarkSuite:
         
         if search_rankings:
             search_rankings.sort(key=lambda x: x[1], reverse=True)
-            print("\n🔍 SEARCH PERFORMANCE RANKING:")
+            print("🔍 SEARCH PERFORMANCE RANKING:")
             for i, (db, qps) in enumerate(search_rankings, 1):
                 medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "  "
                 print(f"  {medal} {i}. {db}: {qps:.1f} QPS")
@@ -2457,13 +3308,13 @@ class ComprehensiveBenchmarkSuite:
         
         if write_rankings:
             write_rankings.sort(key=lambda x: x[1], reverse=True)
-            print("\n✏️  WRITE PERFORMANCE RANKING:")
+            print("✏️  WRITE PERFORMANCE RANKING:")
             for i, (db, ops) in enumerate(write_rankings, 1):
                 medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "  "
                 print(f"  {medal} {i}. {db}: {ops:.1f} ops/sec")
         
         # Overall performance summary
-        print("\n" + "="*80)
+        print("" + "="*80)
         print("OVERALL PERFORMANCE SUMMARY")
         print("="*80)
         
@@ -2518,7 +3369,7 @@ class ComprehensiveBenchmarkSuite:
         with open(filename, 'w') as f:
             json.dump(serializable_results, f, indent=2)
         
-        print(f"\nComprehensive results saved to {filename}")
+        print(f"Comprehensive results saved to {filename}")
 
 
 def main():
@@ -2623,7 +3474,7 @@ def main():
         benchmark.save_results(results, args.output)
         
     except KeyboardInterrupt:
-        print("\nBenchmark interrupted by user")
+        print("Benchmark interrupted by user")
     except Exception as e:
         print(f"Error during benchmark: {e}")
         raise
