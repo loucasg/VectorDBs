@@ -45,7 +45,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - TIMESCALEDB_TELEMETRY=off
     volumes:
-      - ./data/postgres-ts:/home/postgres/pgdata/data
+      - ./data/postgres-ts/data:/home/postgres/pgdata/data
       - ./init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql
     restart: unless-stopped
     healthcheck:
