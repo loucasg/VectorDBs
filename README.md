@@ -32,12 +32,12 @@ python populate_weaviate.py --records 100000
 ### 3. Run Benchmarks
 ```bash
 # Run all benchmarks
-python benchmark_all.py
+python benchmark.py
 
 # Run specific benchmarks
-python benchmark_all.py --read --write
-python benchmark_all.py --postgres --postgres-ts
-python benchmark_all.py --all-databases
+python benchmark.py --read --write
+python benchmark.py --postgres --postgres-ts
+python benchmark.py --all-databases
 ```
 
 ### 4. Count Records
@@ -62,7 +62,7 @@ python balance_databases.py --force
 ## Scripts
 
 ### Main Scripts
-- **`benchmark_all.py`** - Consolidated benchmark suite
+- **`benchmark.py`** - Consolidated benchmark suite
 - **`count_records.py`** - Count records across all databases
 - **`balance_databases.py`** - Balance record counts for fair benchmarking
 - **`populate_*.py`** - Populate individual databases
@@ -71,16 +71,16 @@ python balance_databases.py --force
 ### Benchmark Usage
 ```bash
 # Basic usage
-python benchmark_all.py
+python benchmark.py
 
 # Specific tests
-python benchmark_all.py --read --write
-python benchmark_all.py --postgres --postgres-ts
-python benchmark_all.py --milvus --weaviate
-python benchmark_all.py --all-databases
+python benchmark.py --read --write
+python benchmark.py --postgres --postgres-ts
+python benchmark.py --milvus --weaviate
+python benchmark.py --all-databases
 
 # Custom parameters
-python benchmark_all.py --iterations 50 --load-duration 60
+python benchmark.py --iterations 50 --load-duration 60
 ```
 
 ### Command Line Options
@@ -114,16 +114,16 @@ python benchmark_all.py --iterations 50 --load-duration 60
 
 ```bash
 # Quick test
-python benchmark_all.py --iterations 10
+python benchmark.py --iterations 10
 
 # Read performance only
-python benchmark_all.py --read --iterations 200
+python benchmark.py --read --iterations 200
 
 # All databases comparison
-python benchmark_all.py --all-databases --iterations 100
+python benchmark.py --all-databases --iterations 100
 
 # Load testing
-python benchmark_all.py --load-test --load-duration 300
+python benchmark.py --load-test --load-duration 300
 
 # Balance databases for fair comparison
 python balance_databases.py --dry-run

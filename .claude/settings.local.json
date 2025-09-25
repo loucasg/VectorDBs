@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(psql:*)",
+      "WebSearch",
+      "Bash(python3:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []

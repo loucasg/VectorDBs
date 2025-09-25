@@ -161,7 +161,7 @@ class RecordCounter:
             
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Count total records
-                cur.execute("SELECT COUNT(*) as total_count FROM vector_embeddings;")
+                cur.execute("SELECT COUNT(*) as total_count FROM vector_embeddings_ts;")
                 total_count = cur.fetchone()['total_count']
                 
                 # Get vector dimension - try different approaches
@@ -171,7 +171,7 @@ class RecordCounter:
                 try:
                     cur.execute("""
                         SELECT vector_dims(embedding) as vector_dim
-                        FROM vector_embeddings 
+                        FROM vector_embeddings_ts 
                         LIMIT 1;
                     """)
                     dim_result = cur.fetchone()
@@ -186,7 +186,7 @@ class RecordCounter:
                         cur.execute("""
                             SELECT character_maximum_length 
                             FROM information_schema.columns 
-                            WHERE table_name = 'vector_embeddings' 
+                            WHERE table_name = 'vector_embeddings_ts' 
                             AND column_name = 'embedding';
                         """)
                         dim_result = cur.fetchone()
@@ -199,9 +199,9 @@ class RecordCounter:
                 try:
                     cur.execute("""
                         SELECT 
-                            pg_size_pretty(pg_total_relation_size('vector_embeddings')) as table_size,
-                            pg_size_pretty(pg_relation_size('vector_embeddings')) as data_size,
-                            pg_size_pretty(pg_total_relation_size('vector_embeddings') - pg_relation_size('vector_embeddings')) as index_size
+                            pg_size_pretty(pg_total_relation_size('vector_embeddings_ts')) as table_size,
+                            pg_size_pretty(pg_relation_size('vector_embeddings_ts')) as data_size,
+                            pg_size_pretty(pg_total_relation_size('vector_embeddings_ts') - pg_relation_size('vector_embeddings_ts')) as index_size
                     """)
                     size_info = cur.fetchone()
                 except Exception as e:
@@ -408,7 +408,7 @@ class RecordCounter:
         if postgres_ts_result:
             print(f"\n⏰ TIMESCALEDB DATABASE:")
             if postgres_ts_result["success"]:
-                print(f"  Table: vector_embeddings (hypertable)")
+                print(f"  Table: vector_embeddings_ts (hypertable)")
                 print(f"  Records: {postgres_ts_result['count']:,}")
                 print(f"  Vector Dimension: {postgres_ts_result['vector_dim']}")
                 print(f"  Table Size: {postgres_ts_result['table_size']}")

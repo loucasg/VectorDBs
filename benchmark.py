@@ -736,7 +736,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 with conn.cursor() as cur:
                     cur.execute("""
                         SELECT vector_id, text_content, metadata, embedding
-                        FROM vector_embeddings
+                        FROM vector_embeddings_ts
                         WHERE vector_id = ANY(%s);
                     """, (ids,))
                     return cur.fetchall()
@@ -749,7 +749,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 with conn.cursor() as cur:
                     # Use the new schema with composite primary key (vector_id, created_at)
                     cur.execute("""
-                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
                         VALUES (%s, %s::vector, %s, %s)
                         ON CONFLICT (vector_id, created_at) DO UPDATE SET
                         embedding = EXCLUDED.embedding,
@@ -776,7 +776,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                         )).decode('utf-8'))
 
                     cur.execute(f"""
-                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                        INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
                         VALUES {', '.join(values)}
                         ON CONFLICT (vector_id, created_at) DO UPDATE SET
                         embedding = EXCLUDED.embedding,
@@ -795,7 +795,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    cur.execute("DELETE FROM vector_embeddings WHERE vector_id = %s;", (delete_id,))
+                    cur.execute("DELETE FROM vector_embeddings_ts WHERE vector_id = %s;", (delete_id,))
                     conn.commit()
             finally:
                 conn.close()
@@ -2028,21 +2028,21 @@ def main():
         epilog="""
 USAGE EXAMPLES:
   Run only Qdrant benchmark:
-    python benchmark_all.py --qdrant --iterations 100
+    python benchmark.py --qdrant --iterations 100
 
   Run all databases:
-    python benchmark_all.py --all-databases --iterations 50
+    python benchmark.py --all-databases --iterations 50
 
   Run specific database:
-    python benchmark_all.py --postgres --iterations 100
-    python benchmark_all.py --milvus --iterations 100
-    python benchmark_all.py --weaviate --iterations 100
+    python benchmark.py --postgres --iterations 100
+    python benchmark.py --milvus --iterations 100
+    python benchmark.py --weaviate --iterations 100
 
   Quick test with few iterations:
-    python benchmark_all.py --qdrant --iterations 1 --load-duration 5
+    python benchmark.py --qdrant --iterations 1 --load-duration 5
 
   Custom Qdrant connection:
-    python benchmark_all.py --qdrant --qdrant-host 192.168.1.100 --qdrant-port 6333
+    python benchmark.py --qdrant --qdrant-host 192.168.1.100 --qdrant-port 6333
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
