@@ -2036,13 +2036,14 @@ def main():
         description="Comprehensive Vector Database Benchmark Suite",
         epilog="""
 USAGE EXAMPLES:
-  Run only Qdrant benchmark:
-    python benchmark.py --qdrant --iterations 100
+  Run all databases (default):
+    python benchmark.py --all --iterations 100
 
-  Run all databases:
+  Run all databases (alternative):
     python benchmark.py --all-databases --iterations 50
 
-  Run specific database:
+  Run only specific database:
+    python benchmark.py --qdrant --iterations 100
     python benchmark.py --postgres --iterations 100
     python benchmark.py --milvus --iterations 100
     python benchmark.py --weaviate --iterations 100
@@ -2083,7 +2084,7 @@ USAGE EXAMPLES:
     parser.add_argument("--load-duration", type=int, default=120, help="Load test duration in seconds")
     
     # Test selection flags
-    parser.add_argument("--all", action="store_true", help="Run all benchmarks")
+    parser.add_argument("--all", action="store_true", help="Run all benchmarks (Qdrant, PostgreSQL, TimescaleDB, Milvus, Weaviate)")
     parser.add_argument("--read", action="store_true", help="Run read benchmark only")
     parser.add_argument("--write", action="store_true", help="Run write benchmark only")
     parser.add_argument("--qdrant", action="store_true", help="Run Qdrant benchmark only")
@@ -2104,7 +2105,7 @@ USAGE EXAMPLES:
     if args.all or not any([args.read, args.write, args.qdrant, args.postgres, args.postgres_ts, args.comparison, args.load_test, args.milvus, args.weaviate, args.all_databases]):
         # If no specific tests are selected, run all
         run_read = run_write = run_postgres = run_postgres_ts = run_comparison = run_load_test = True
-        run_milvus = run_weaviate = False
+        run_milvus = run_weaviate = True  # Include Milvus and Weaviate in --all
     elif args.all_databases:
         # Run all database benchmarks
         run_read = run_write = run_postgres = run_postgres_ts = run_comparison = run_load_test = True
