@@ -36,7 +36,7 @@ services:
   # TimescaleDB with pgvector (PostgreSQL 17)
   timescaledb:
     image: timescale/timescaledb-ha:pg17
-    container_name: timescaledb
+    container_name: timescaledb_vector_db
     ports:
       - "5433:5432"  # Different port to avoid conflict
     environment:
