@@ -1804,75 +1804,75 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         if qdrant_benchmark:
             table_data.append({
                 "Database": "Qdrant",
-                "Search QPS": f"{round(qdrant_benchmark.get('single_search', {}).get('qps', 0))}",
-                "Batch Search QPS": f"{round(qdrant_benchmark.get('batch_search', {}).get('qps', 0))}",
-                "Filtered Search QPS": f"{round(qdrant_benchmark.get('filtered_search', {}).get('qps', 0))}",
-                "ID Retrieval QPS": f"{round(qdrant_benchmark.get('retrieve_by_id', {}).get('qps', 0))}",
-                "Concurrent Search QPS": f"{round(qdrant_benchmark.get('concurrent_search', {}).get('qps', 0))}",
-                "Single Insert ops/sec": f"{round(qdrant_benchmark.get('single_insert', {}).get('throughput', 0))}",
-                "Batch Insert (100) ops/sec": f"{round(qdrant_benchmark.get('batch_insert_100', {}).get('throughput', 0))}",
-                "Update ops/sec": f"{round(qdrant_benchmark.get('update', {}).get('throughput', 0))}",
-                "Delete ops/sec": f"{round(qdrant_benchmark.get('delete', {}).get('throughput', 0))}"
+                "Search QPS": f"{qdrant_benchmark.get('single_search', {}).get('qps', 0):.2f}",
+                "Batch Search QPS": f"{qdrant_benchmark.get('batch_search', {}).get('qps', 0):.2f}",
+                "Filtered Search QPS": f"{qdrant_benchmark.get('filtered_search', {}).get('qps', 0):.2f}",
+                "ID Retrieval QPS": f"{qdrant_benchmark.get('retrieve_by_id', {}).get('qps', 0):.2f}",
+                "Concurrent Search QPS": f"{qdrant_benchmark.get('concurrent_search', {}).get('qps', 0):.2f}",
+                "Single Insert ops/sec": f"{qdrant_benchmark.get('single_insert', {}).get('throughput', 0):.2f}",
+                "Batch Insert (100) ops/sec": f"{qdrant_benchmark.get('batch_insert_100', {}).get('throughput', 0):.2f}",
+                "Update ops/sec": f"{qdrant_benchmark.get('update', {}).get('throughput', 0):.2f}",
+                "Delete ops/sec": f"{qdrant_benchmark.get('delete', {}).get('throughput', 0):.2f}"
             })
         
         # PostgreSQL data
         if postgres:
             table_data.append({
                 "Database": "PostgreSQL",
-                "Search QPS": f"{round(postgres.get('single_search', {}).get('qps', 0))}",
-                "Batch Search QPS": f"{round(postgres.get('batch_search', {}).get('qps', 0))}",
-                "Filtered Search QPS": f"{round(postgres.get('filtered_search', {}).get('qps', 0))}",
-                "ID Retrieval QPS": f"{round(postgres.get('retrieve_by_id', {}).get('qps', 0))}",
-                "Concurrent Search QPS": f"{round(postgres.get('concurrent_search', {}).get('qps', 0))}",
-                "Single Insert ops/sec": f"{round(postgres.get('single_insert', {}).get('throughput', 0))}",
-                "Batch Insert (100) ops/sec": f"{round(postgres.get('batch_insert_100', {}).get('throughput', 0))}",
-                "Update ops/sec": f"{round(postgres.get('update', {}).get('throughput', 0))}",
-                "Delete ops/sec": f"{round(postgres.get('delete', {}).get('throughput', 0))}"
+                "Search QPS": f"{postgres.get('single_search', {}).get('qps', 0):.2f}",
+                "Batch Search QPS": f"{postgres.get('batch_search', {}).get('qps', 0):.2f}",
+                "Filtered Search QPS": f"{postgres.get('filtered_search', {}).get('qps', 0):.2f}",
+                "ID Retrieval QPS": f"{postgres.get('retrieve_by_id', {}).get('qps', 0):.2f}",
+                "Concurrent Search QPS": f"{postgres.get('concurrent_search', {}).get('qps', 0):.2f}",
+                "Single Insert ops/sec": f"{postgres.get('single_insert', {}).get('throughput', 0):.2f}",
+                "Batch Insert (100) ops/sec": f"{postgres.get('batch_insert_100', {}).get('throughput', 0):.2f}",
+                "Update ops/sec": f"{postgres.get('update', {}).get('throughput', 0):.2f}",
+                "Delete ops/sec": f"{postgres.get('delete', {}).get('throughput', 0):.2f}"
             })
         
         # TimescaleDB data
         if postgres_ts and "error" not in postgres_ts:
             table_data.append({
                 "Database": "TimescaleDB",
-                "Search QPS": f"{round(postgres_ts.get('single_search', {}).get('qps', 0))}",
-                "Batch Search QPS": f"{round(postgres_ts.get('batch_search', {}).get('qps', 0))}",
-                "Filtered Search QPS": f"{round(postgres_ts.get('filtered_search', {}).get('qps', 0))}",
-                "ID Retrieval QPS": f"{round(postgres_ts.get('retrieve_by_id', {}).get('qps', 0))}",
-                "Concurrent Search QPS": f"{round(postgres_ts.get('concurrent_search', {}).get('qps', 0))}",
-                "Single Insert ops/sec": f"{round(postgres_ts.get('single_insert', {}).get('throughput', 0))}",
-                "Batch Insert (100) ops/sec": f"{round(postgres_ts.get('batch_insert_100', {}).get('throughput', 0))}",
-                "Update ops/sec": f"{round(postgres_ts.get('update', {}).get('throughput', 0))}",
-                "Delete ops/sec": f"{round(postgres_ts.get('delete', {}).get('throughput', 0))}"
+                "Search QPS": f"{postgres_ts.get('single_search', {}).get('qps', 0):.2f}",
+                "Batch Search QPS": f"{postgres_ts.get('batch_search', {}).get('qps', 0):.2f}",
+                "Filtered Search QPS": f"{postgres_ts.get('filtered_search', {}).get('qps', 0):.2f}",
+                "ID Retrieval QPS": f"{postgres_ts.get('retrieve_by_id', {}).get('qps', 0):.2f}",
+                "Concurrent Search QPS": f"{postgres_ts.get('concurrent_search', {}).get('qps', 0):.2f}",
+                "Single Insert ops/sec": f"{postgres_ts.get('single_insert', {}).get('throughput', 0):.2f}",
+                "Batch Insert (100) ops/sec": f"{postgres_ts.get('batch_insert_100', {}).get('throughput', 0):.2f}",
+                "Update ops/sec": f"{postgres_ts.get('update', {}).get('throughput', 0):.2f}",
+                "Delete ops/sec": f"{postgres_ts.get('delete', {}).get('throughput', 0):.2f}"
             })
         
         # Milvus data
         if milvus and "error" not in milvus:
             table_data.append({
                 "Database": "Milvus",
-                "Search QPS": f"{round(milvus.get('single_search', {}).get('qps', 0))}",
-                "Batch Search QPS": f"{round(milvus.get('batch_search', {}).get('qps', 0))}",
-                "Filtered Search QPS": f"{round(milvus.get('filtered_search', {}).get('qps', 0))}",
-                "ID Retrieval QPS": f"{round(milvus.get('retrieve_by_id', {}).get('qps', 0))}",
-                "Concurrent Search QPS": f"{round(milvus.get('concurrent_search', {}).get('qps', 0))}",
-                "Single Insert ops/sec": f"{round(milvus.get('single_insert', {}).get('throughput', 0))}",
-                "Batch Insert (100) ops/sec": f"{round(milvus.get('batch_insert_100', {}).get('throughput', 0))}",
-                "Update ops/sec": f"{round(milvus.get('update', {}).get('throughput', 0))}",
-                "Delete ops/sec": f"{round(milvus.get('delete', {}).get('throughput', 0))}"
+                "Search QPS": f"{milvus.get('single_search', {}).get('qps', 0):.2f}",
+                "Batch Search QPS": f"{milvus.get('batch_search', {}).get('qps', 0):.2f}",
+                "Filtered Search QPS": f"{milvus.get('filtered_search', {}).get('qps', 0):.2f}",
+                "ID Retrieval QPS": f"{milvus.get('retrieve_by_id', {}).get('qps', 0):.2f}",
+                "Concurrent Search QPS": f"{milvus.get('concurrent_search', {}).get('qps', 0):.2f}",
+                "Single Insert ops/sec": f"{milvus.get('single_insert', {}).get('throughput', 0):.2f}",
+                "Batch Insert (100) ops/sec": f"{milvus.get('batch_insert_100', {}).get('throughput', 0):.2f}",
+                "Update ops/sec": f"{milvus.get('update', {}).get('throughput', 0):.2f}",
+                "Delete ops/sec": f"{milvus.get('delete', {}).get('throughput', 0):.2f}"
             })
         
         # Weaviate data
         if weaviate and "error" not in weaviate:
             table_data.append({
                 "Database": "Weaviate",
-                "Search QPS": f"{round(weaviate.get('single_search', {}).get('qps', 0))}",
-                "Batch Search QPS": f"{round(weaviate.get('batch_search', {}).get('qps', 0))}",
-                "Filtered Search QPS": f"{round(weaviate.get('filtered_search', {}).get('qps', 0))}",
-                "ID Retrieval QPS": f"{round(weaviate.get('retrieve_by_id', {}).get('qps', 0))}",
-                "Concurrent Search QPS": f"{round(weaviate.get('concurrent_search', {}).get('qps', 0))}",
-                "Single Insert ops/sec": f"{round(weaviate.get('single_insert', {}).get('throughput', 0))}",
-                "Batch Insert (100) ops/sec": f"{round(weaviate.get('batch_insert_100', {}).get('throughput', 0))}",
-                "Update ops/sec": f"{round(weaviate.get('update', {}).get('throughput', 0))}",
-                "Delete ops/sec": f"{round(weaviate.get('delete', {}).get('throughput', 0))}"
+                "Search QPS": f"{weaviate.get('single_search', {}).get('qps', 0):.2f}",
+                "Batch Search QPS": f"{weaviate.get('batch_search', {}).get('qps', 0):.2f}",
+                "Filtered Search QPS": f"{weaviate.get('filtered_search', {}).get('qps', 0):.2f}",
+                "ID Retrieval QPS": f"{weaviate.get('retrieve_by_id', {}).get('qps', 0):.2f}",
+                "Concurrent Search QPS": f"{weaviate.get('concurrent_search', {}).get('qps', 0):.2f}",
+                "Single Insert ops/sec": f"{weaviate.get('single_insert', {}).get('throughput', 0):.2f}",
+                "Batch Insert (100) ops/sec": f"{weaviate.get('batch_insert_100', {}).get('throughput', 0):.2f}",
+                "Update ops/sec": f"{weaviate.get('update', {}).get('throughput', 0):.2f}",
+                "Delete ops/sec": f"{weaviate.get('delete', {}).get('throughput', 0):.2f}"
             })
         
         if not table_data:
