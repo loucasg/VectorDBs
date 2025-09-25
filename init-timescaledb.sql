@@ -12,7 +12,7 @@ CREATE EXTENSION IF NOT EXISTS vectorscale;
 
 -- Create a table for vector embeddings with time-series capabilities
 -- Note: For TimescaleDB, we need to include the partitioning column in the primary key
-CREATE TABLE IF NOT EXISTS vector_embeddings (
+CREATE TABLE IF NOT EXISTS vector_embeddings_ts (
     id SERIAL,
     vector_id INTEGER NOT NULL,
     embedding VECTOR(1024),  -- 1024-dimensional vectors
@@ -25,23 +25,23 @@ CREATE TABLE IF NOT EXISTS vector_embeddings (
 
 -- Convert the table to a hypertable (TimescaleDB feature)
 -- This partitions the data by time for better performance on time-series queries
-SELECT create_hypertable('vector_embeddings', 'created_at', if_not_exists => TRUE);
+SELECT create_hypertable('vector_embeddings_ts', 'created_at', if_not_exists => TRUE);
 
 -- Create indexes for better performance
 -- Note: For hypertables, unique indexes must include the partitioning column
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_embeddings_vector_id_time 
-ON vector_embeddings(vector_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_vector_id ON vector_embeddings(vector_id);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_metadata ON vector_embeddings USING GIN(metadata);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_created_at ON vector_embeddings(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_embeddings_ts_vector_id_time 
+ON vector_embeddings_ts(vector_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_vector_id ON vector_embeddings_ts(vector_id);
+CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_metadata ON vector_embeddings_ts USING GIN(metadata);
+CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_created_at ON vector_embeddings_ts(created_at);
 
 -- Configure memory for optimal index build performance
 SET maintenance_work_mem = '2GB';
 
 -- Create DiskANN index for high-performance vector similarity search
 -- DiskANN provides better performance than HNSW for large datasets
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_embedding_diskann 
-ON vector_embeddings USING diskann (embedding)
+CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_embedding_diskann 
+ON vector_embeddings_ts USING diskann (embedding)
 WITH (
     num_neighbors = 50,           -- Maximum number of neighbors per node
     search_list_size = 100,       -- Number of additional candidates during graph search
@@ -52,8 +52,8 @@ WITH (
 
 -- Create additional DiskANN index optimized for different distance metrics if needed
 -- This creates a backup index with different parameters for comparison
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_embedding_diskann_l2 
-ON vector_embeddings USING diskann (embedding vector_l2_ops)
+CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_embedding_diskann_l2 
+ON vector_embeddings_ts USING diskann (embedding vector_l2_ops)
 WITH (
     num_neighbors = 30,
     search_list_size = 75,
@@ -74,8 +74,8 @@ END;
 $$ language 'plpgsql';
 
 -- Create trigger to automatically update updated_at
-CREATE TRIGGER update_vector_embeddings_updated_at 
-    BEFORE UPDATE ON vector_embeddings 
+CREATE TRIGGER update_vector_embeddings_ts_updated_at 
+    BEFORE UPDATE ON vector_embeddings_ts 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -107,7 +107,7 @@ BEGIN
         ve.metadata,
         1 - (ve.embedding <=> query_embedding) AS similarity,
         ve.embedding <=> query_embedding AS distance
-    FROM vector_embeddings ve
+    FROM vector_embeddings_ts ve
     WHERE 1 - (ve.embedding <=> query_embedding) > similarity_threshold
     ORDER BY ve.embedding <=> query_embedding
     LIMIT match_limit;
@@ -145,7 +145,7 @@ BEGIN
         ve.created_at,
         1 - (ve.embedding <=> query_embedding) AS similarity,
         ve.embedding <=> query_embedding AS distance
-    FROM vector_embeddings ve
+    FROM vector_embeddings_ts ve
     WHERE ve.created_at BETWEEN start_time AND end_time
       AND 1 - (ve.embedding <=> query_embedding) > similarity_threshold
     ORDER BY ve.embedding <=> query_embedding
@@ -180,7 +180,7 @@ BEGIN
             ve.text_content,
             ve.metadata,
             1 - (ve.embedding <=> query_embedding) AS similarity
-        FROM vector_embeddings ve
+        FROM vector_embeddings_ts ve
         WHERE 1 - (ve.embedding <=> query_embedding) > similarity_threshold
         ORDER BY ve.embedding <=> query_embedding
         LIMIT match_limit;
@@ -212,8 +212,8 @@ BEGIN
         ) as created_at_range,
         'TimescaleDB hypertable with pgvectorscale' as hypertable_info,
         'DiskANN indexes: cosine, l2' as diskann_indexes,
-        pg_size_pretty(pg_total_relation_size('vector_embeddings')) as index_sizes
-    FROM vector_embeddings;
+        pg_size_pretty(hypertable_size('vector_embeddings_ts')) as index_sizes
+    FROM vector_embeddings_ts;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -254,36 +254,36 @@ BEGIN
         i.tablename::TEXT,
         'DiskANN'::TEXT
     FROM pg_indexes i
-    WHERE i.tablename = 'vector_embeddings' 
+    WHERE i.tablename = 'vector_embeddings_ts' 
       AND i.indexdef LIKE '%diskann%';
 END;
 $$ LANGUAGE plpgsql;
 
 -- Create TimescaleDB-specific continuous aggregates for time-based analytics
 -- This creates a materialized view that automatically aggregates data by hour
-CREATE MATERIALIZED VIEW IF NOT EXISTS vector_embeddings_hourly
+CREATE MATERIALIZED VIEW IF NOT EXISTS vector_embeddings_ts_hourly
 WITH (timescaledb.continuous) AS
 SELECT 
     time_bucket('1 hour', created_at) AS bucket,
     COUNT(*) as vectors_count,
     AVG(LENGTH(text_content)) as avg_text_length
-FROM vector_embeddings
+FROM vector_embeddings_ts
 GROUP BY bucket
 WITH NO DATA;
 
 -- Enable automatic refresh of the continuous aggregate
-SELECT add_continuous_aggregate_policy('vector_embeddings_hourly',
+SELECT add_continuous_aggregate_policy('vector_embeddings_ts_hourly',
     start_offset => INTERVAL '1 day',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour',
     if_not_exists => TRUE);
 
 -- Insert some sample data for testing
-INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata) VALUES
+INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata) VALUES
 (1, ARRAY[0.1, 0.2, 0.3, 0.4, 0.5]::VECTOR(1024), 'TimescaleDB sample document 1', '{"category": "timeseries", "source": "sample"}'),
 (2, ARRAY[0.2, 0.3, 0.4, 0.5, 0.6]::VECTOR(1024), 'TimescaleDB sample document 2', '{"category": "timeseries", "source": "sample"}'),
 (3, ARRAY[0.3, 0.4, 0.5, 0.6, 0.7]::VECTOR(1024), 'TimescaleDB sample document 3', '{"category": "timeseries", "source": "sample"}')
-ON CONFLICT (vector_id) DO NOTHING;
+ON CONFLICT (vector_id, created_at) DO NOTHING;
 
 -- Grant permissions
 GRANT ALL PRIVILEGES ON DATABASE vectordb TO postgres;

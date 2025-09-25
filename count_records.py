@@ -195,14 +195,33 @@ class RecordCounter:
                     except Exception as e:
                         print(f"Warning: Could not get vector dimension from column definition: {e}")
                 
-                # Get table size info
+                # Get table size info - use TimescaleDB-specific functions for hypertables
                 try:
+                    # First check if this is a hypertable
                     cur.execute("""
-                        SELECT 
-                            pg_size_pretty(pg_total_relation_size('vector_embeddings_ts')) as table_size,
-                            pg_size_pretty(pg_relation_size('vector_embeddings_ts')) as data_size,
-                            pg_size_pretty(pg_total_relation_size('vector_embeddings_ts') - pg_relation_size('vector_embeddings_ts')) as index_size
+                        SELECT EXISTS (
+                            SELECT 1 FROM timescaledb_information.hypertables 
+                            WHERE hypertable_name = 'vector_embeddings_ts'
+                        ) as is_hypertable;
                     """)
+                    is_hypertable = cur.fetchone()['is_hypertable']
+                    
+                    if is_hypertable:
+                        # Use TimescaleDB hypertable size functions
+                        cur.execute("""
+                            SELECT 
+                                pg_size_pretty(hypertable_size('vector_embeddings_ts')) as table_size,
+                                pg_size_pretty(hypertable_size('vector_embeddings_ts')) as data_size,
+                                '0 bytes' as index_size
+                        """)
+                    else:
+                        # Use regular PostgreSQL size functions
+                        cur.execute("""
+                            SELECT 
+                                pg_size_pretty(pg_total_relation_size('vector_embeddings_ts')) as table_size,
+                                pg_size_pretty(pg_relation_size('vector_embeddings_ts')) as data_size,
+                                pg_size_pretty(pg_total_relation_size('vector_embeddings_ts') - pg_relation_size('vector_embeddings_ts')) as index_size
+                        """)
                     size_info = cur.fetchone()
                 except Exception as e:
                     print(f"Warning: Could not get table size info: {e}")
