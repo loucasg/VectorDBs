@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """
-PostgreSQL Vector Database Population Script
-Populates PostgreSQL with pgvector extension with test data.
+Simplified PostgreSQL Vector Database Population Script
+High-performance version with better error handling.
 """
 
-import asyncio
 import time
 import random
 import numpy as np
 import json
 from typing import List, Dict, Any
 import psycopg2
-from psycopg2.extras import RealDictCursor
-import psutil
-import os
-from concurrent.futures import ThreadPoolExecutor
+from psycopg2.extras import RealDictCursor, execute_values
 import argparse
 from tqdm import tqdm
 
 
 class PostgreSQLVectorPopulator:
-    def __init__(self, host: str = "localhost", port: int = 5432, 
-                 database: str = "vectordb", user: str = "postgres", 
+    def __init__(self, host: str = "localhost", port: int = 5432,
+                 database: str = "vectordb", user: str = "postgres",
                  password: str = "postgres"):
         self.host = host
         self.port = port
@@ -30,7 +26,7 @@ class PostgreSQLVectorPopulator:
         self.password = password
         self.vector_dim = 1024
         self.batch_size = 1000
-        
+
     def get_connection(self):
         """Get a database connection"""
         return psycopg2.connect(
@@ -40,195 +36,6 @@ class PostgreSQLVectorPopulator:
             user=self.user,
             password=self.password
         )
-    
-    def create_collection(self):
-        """Create the vector embeddings table if it doesn't exist"""
-        conn = self.get_connection()
-        try:
-            with conn.cursor() as cur:
-                # Check if table exists
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name = 'vector_embeddings'
-                    );
-                """)
-                table_exists = cur.fetchone()[0]
-                
-                if table_exists:
-                    print("Table 'vector_embeddings' already exists. Adding to existing table...")
-                    
-                    # Check if the table has the correct vector dimension
-                    cur.execute("""
-                        SELECT column_name, data_type, udt_name, character_maximum_length 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'vector_embeddings' 
-                        AND column_name = 'embedding';
-                    """)
-                    result = cur.fetchone()
-                    
-                    if result:
-                        # Extract dimension from VECTOR(n) type
-                        data_type = result[1]
-                        udt_name = result[2]
-                        if 'vector' in data_type.lower() or udt_name == 'vector':
-                            # Parse VECTOR(1024) to get dimension
-                            import re
-                            match = re.search(r'VECTOR\((\d+)\)', data_type)
-                            if match:
-                                current_dim = int(match.group(1))
-                                if current_dim != self.vector_dim:
-                                    print(f"⚠️  Warning: Table has {current_dim}D vectors, but script is using {self.vector_dim}D vectors.")
-                                    print("⚠️  This may cause errors. Consider using --vector-dim {current_dim} to match existing data.")
-                                    print("⚠️  Or recreate the table manually if you want to change dimensions.")
-                                else:
-                                    print(f"✅ Table ready for {self.vector_dim}D vectors - will add to existing data")
-                            else:
-                                # Generic VECTOR type without dimension - check existing data
-                                print("Table has generic VECTOR type. Checking existing data...")
-                                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
-                                count = cur.fetchone()[0]
-                                
-                                if count > 0:
-                                    # Try to get dimension from existing data
-                                    try:
-                                        # Use a different approach to get vector dimension
-                                        cur.execute("SELECT array_length(embedding::float[], 1) FROM vector_embeddings LIMIT 1;")
-                                        existing_dim = cur.fetchone()[0]
-                                        if existing_dim != self.vector_dim:
-                                            print(f"⚠️  Warning: Existing data has {existing_dim}D vectors, but script is using {self.vector_dim}D vectors.")
-                                            print("⚠️  This may cause errors. Consider using --vector-dim {existing_dim} to match existing data.")
-                                        else:
-                                            print(f"✅ Table ready for {self.vector_dim}D vectors - will add to existing data")
-                                    except Exception as e:
-                                        print(f"⚠️  Warning: Could not determine vector dimension from existing data: {e}")
-                                        print("⚠️  Proceeding with current vector dimension - this may cause errors if dimensions don't match")
-                                else:
-                                    # Empty table with generic VECTOR type - recreate with specific dimension
-                                    print("Empty table with generic VECTOR type. Recreating with specific dimensions...")
-                                    cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
-                                    self._create_table_with_dimensions(cur, self.vector_dim)
-                                    print(f"Table recreated with {self.vector_dim}D vectors")
-                        else:
-                            print("Table does not have a vector column - recreating...")
-                            cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
-                            self._create_table_with_dimensions(cur, self.vector_dim)
-                            print(f"Table recreated with {self.vector_dim}D vectors")
-                    else:
-                        print("Could not find embedding column in table - recreating...")
-                        cur.execute("DROP TABLE IF EXISTS vector_embeddings CASCADE;")
-                        self._create_table_with_dimensions(cur, self.vector_dim)
-                        print(f"Table recreated with {self.vector_dim}D vectors")
-                else:
-                    print("Table 'vector_embeddings' does not exist. Creating it...")
-                    self._create_table_with_dimensions(cur, self.vector_dim)
-                    print(f"Table created with {self.vector_dim}D vectors")
-                
-                conn.commit()
-                
-        except Exception as e:
-            print(f"Error creating collection: {e}")
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def _create_table_with_dimensions(self, cur, vector_dim):
-        """Create table with specified vector dimensions"""
-        # Create table
-        cur.execute(f"""
-            CREATE TABLE vector_embeddings (
-                id SERIAL PRIMARY KEY,
-                vector_id INTEGER UNIQUE NOT NULL,
-                embedding VECTOR({vector_dim}),
-                text_content TEXT,
-                metadata JSONB,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # Create indexes
-        cur.execute("CREATE INDEX idx_vector_embeddings_vector_id ON vector_embeddings(vector_id);")
-        cur.execute("CREATE INDEX idx_vector_embeddings_metadata ON vector_embeddings USING GIN(metadata);")
-        cur.execute("CREATE INDEX idx_vector_embeddings_created_at ON vector_embeddings(created_at);")
-        cur.execute(f"""
-            CREATE INDEX idx_vector_embeddings_embedding_hnsw 
-            ON vector_embeddings USING hnsw (embedding vector_cosine_ops)
-            WITH (m = 16, ef_construction = 64);
-        """)
-        
-        # Create trigger function
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION update_updated_at_column()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                NEW.updated_at = CURRENT_TIMESTAMP;
-                RETURN NEW;
-            END;
-            $$ language 'plpgsql';
-        """)
-        
-        # Create trigger
-        cur.execute("""
-            CREATE TRIGGER update_vector_embeddings_updated_at 
-                BEFORE UPDATE ON vector_embeddings 
-                FOR EACH ROW 
-                EXECUTE FUNCTION update_updated_at_column();
-        """)
-        
-        # Create search function
-        cur.execute(f"""
-            CREATE OR REPLACE FUNCTION search_similar_vectors(
-                query_embedding VECTOR({vector_dim}),
-                match_limit INTEGER DEFAULT 10,
-                similarity_threshold FLOAT DEFAULT 0.0
-            )
-            RETURNS TABLE (
-                vector_id INTEGER,
-                text_content TEXT,
-                metadata JSONB,
-                similarity FLOAT
-            ) AS $$
-            BEGIN
-                RETURN QUERY
-                SELECT 
-                    ve.vector_id,
-                    ve.text_content,
-                    ve.metadata,
-                    1 - (ve.embedding <=> query_embedding) AS similarity
-                FROM vector_embeddings ve
-                WHERE 1 - (ve.embedding <=> query_embedding) > similarity_threshold
-                ORDER BY ve.embedding <=> query_embedding
-                LIMIT match_limit;
-            END;
-            $$ LANGUAGE plpgsql;
-        """)
-        
-        # Create stats function
-        cur.execute(f"""
-            CREATE OR REPLACE FUNCTION get_collection_stats()
-            RETURNS TABLE (
-                total_points BIGINT,
-                vector_dimensions INTEGER,
-                avg_metadata_size FLOAT,
-                created_at_range TEXT
-            ) AS $$
-            BEGIN
-                RETURN QUERY
-                SELECT 
-                    COUNT(*)::BIGINT as total_points,
-                    {vector_dim} as vector_dimensions,
-                    AVG(LENGTH(metadata::TEXT)::FLOAT) as avg_metadata_size,
-                    CONCAT(
-                        MIN(created_at)::TEXT, 
-                        ' to ', 
-                        MAX(created_at)::TEXT
-                    ) as created_at_range
-                FROM vector_embeddings;
-            END;
-            $$ LANGUAGE plpgsql;
-        """)
 
     def generate_random_vector(self) -> List[float]:
         """Generate a random normalized vector"""
@@ -254,62 +61,94 @@ class PostgreSQLVectorPopulator:
             }
         }
 
-    def get_next_available_id(self) -> int:
-        """Get the next available ID to avoid conflicts when adding to existing data"""
+    def get_next_available_id(self, count: int = 1) -> int:
+        """Get the next available ID range to avoid conflicts when adding to existing data"""
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT COALESCE(MAX(vector_id), 0) + 1 FROM vector_embeddings;")
-                next_id = cur.fetchone()[0]
+                # Use a more atomic approach by updating a counter and returning the range
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS vector_id_counter (
+                        id INTEGER PRIMARY KEY DEFAULT 1,
+                        last_id INTEGER NOT NULL DEFAULT 0
+                    );
+                """)
+
+                # Try to insert the initial counter if it doesn't exist
+                cur.execute("""
+                    INSERT INTO vector_id_counter (id, last_id)
+                    VALUES (1, (SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings))
+                    ON CONFLICT (id) DO NOTHING;
+                """)
+
+                # Atomically get and update the counter
+                cur.execute("""
+                    UPDATE vector_id_counter
+                    SET last_id = last_id + %s
+                    WHERE id = 1
+                    RETURNING last_id - %s + 1;
+                """, (count, count))
+
+                result = cur.fetchone()
+                if result:
+                    next_id = result[0]
+                else:
+                    # Fallback if something goes wrong
+                    cur.execute("SELECT COALESCE(MAX(vector_id), 0) + 1 FROM vector_embeddings;")
+                    next_id = cur.fetchone()[0]
+
+                conn.commit()
                 return next_id
         except Exception as e:
             print(f"Error getting next available ID: {e}")
-            return 1  # Fallback to starting from 1
+            conn.rollback()
+            # Use timestamp-based fallback to avoid conflicts
+            import time
+            return int(time.time() * 1000) % 1000000000  # Use timestamp-based ID
         finally:
             conn.close()
 
-    def insert_batch(self, batch_data: List[Dict[str, Any]]) -> bool:
+    def insert_batch(self, batch_data: List[Dict[str, Any]], conn) -> int:
         """Insert a batch of records"""
-        conn = self.get_connection()
         try:
             with conn.cursor() as cur:
-                # Prepare batch insert
-                insert_query = """
-                    INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (vector_id) DO UPDATE SET
-                        embedding = EXCLUDED.embedding,
-                        text_content = EXCLUDED.text_content,
-                        metadata = EXCLUDED.metadata,
-                        updated_at = CURRENT_TIMESTAMP
-                """
-                
                 # Convert data to tuples for batch insert
                 batch_tuples = []
                 for record in batch_data:
                     vector = self.generate_random_vector()
                     chunk_data = self.generate_chunk_data(record['id'])
-                    
+
                     batch_tuples.append((
                         record['id'],
                         vector,
                         chunk_data['text'],
-                        json.dumps(chunk_data['metadata'])  # Convert dict to JSON string
+                        json.dumps(chunk_data['metadata'])
                     ))
-                
-                # Execute batch insert
-                cur.executemany(insert_query, batch_tuples)
+
+                # Use execute_values for much better performance
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                    VALUES %s
+                    ON CONFLICT (vector_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        text_content = EXCLUDED.text_content,
+                        metadata = EXCLUDED.metadata,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    batch_tuples,
+                    page_size=self.batch_size
+                )
                 conn.commit()
-                return True
-                
+                return len(batch_tuples)
+
         except Exception as e:
             print(f"Error inserting batch: {e}")
             conn.rollback()
-            return False
-        finally:
-            conn.close()
+            return 0
 
-    def populate_database(self, total_records: int = 10_000_000, max_workers: int = 4):
+    def populate_database(self, total_records: int = 10_000):
         """Populate the database with the specified number of records"""
         print(f"\n{'='*50}")
         print(f"POPULATING POSTGRESQL DATABASE")
@@ -318,8 +157,7 @@ class PostgreSQLVectorPopulator:
         print(f"Records to insert: {total_records:,}")
         print(f"Vector dimension: {self.vector_dim}")
         print(f"Batch size: {self.batch_size}")
-        print(f"Max workers: {max_workers}")
-        
+
         # Get current count and next available ID
         conn = self.get_connection()
         try:
@@ -330,74 +168,45 @@ class PostgreSQLVectorPopulator:
         except Exception as e:
             print(f"Error getting current count: {e}")
             current_count = 0
-        finally:
-            conn.close()
-        
-        # Get the next available ID to avoid conflicts
-        start_id = self.get_next_available_id()
+
+        # Get the next available ID range to avoid conflicts
+        start_id = self.get_next_available_id(total_records)
         print(f"Starting from ID: {start_id}")
         print(f"Will add {total_records:,} new records (total will be {current_count + total_records:,})")
-        
+
         start_time = time.time()
         total_batches = (total_records + self.batch_size - 1) // self.batch_size
-        
+
         # Create progress bar
         pbar = tqdm(total=total_records, desc="Inserting records", unit="records")
-        
-        # Track memory usage
-        process = psutil.Process(os.getpid())
-        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-        
+
+        records_inserted = 0
         successful_batches = 0
         failed_batches = 0
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = []
-            
+
+        try:
             for batch_idx in range(total_batches):
                 batch_start_id = start_id + (batch_idx * self.batch_size)
                 current_batch_size = min(self.batch_size, total_records - (batch_idx * self.batch_size))
-                
+
                 # Create batch data
                 batch_data = [{"id": batch_start_id + i} for i in range(current_batch_size)]
-                
-                # Submit batch for insertion
-                future = executor.submit(self.insert_batch, batch_data)
-                futures.append(future)
-                
-                # Process completed futures
-                if len(futures) >= max_workers * 2:  # Keep some futures in flight
-                    completed_futures = []
-                    for future in futures:
-                        if future.done():
-                            if future.result():
-                                successful_batches += 1
-                            else:
-                                failed_batches += 1
-                            completed_futures.append(future)
-                    
-                    # Remove completed futures
-                    for future in completed_futures:
-                        futures.remove(future)
-                        pbar.update(self.batch_size)
-            
-            # Wait for remaining futures
-            for future in futures:
-                if future.result():
+
+                result = self.insert_batch(batch_data, conn)
+                if result > 0:
                     successful_batches += 1
+                    records_inserted += result
+                    pbar.update(result)
                 else:
                     failed_batches += 1
-                pbar.update(self.batch_size)
-        
+        finally:
+            conn.close()
+
         pbar.close()
-        
+
         end_time = time.time()
         duration = end_time - start_time
-        
-        # Final memory usage
-        final_memory = process.memory_info().rss / 1024 / 1024  # MB
-        memory_used = final_memory - initial_memory
-        
+
         # Get final count
         conn = self.get_connection()
         try:
@@ -409,23 +218,19 @@ class PostgreSQLVectorPopulator:
             final_count = current_count + total_records
         finally:
             conn.close()
-        
+
         # Print statistics
         print(f"\n{'='*50}")
         print(f"POPULATION COMPLETED")
         print(f"{'='*50}")
-        print(f"Records added: {total_records:,}")
+        print(f"Records added: {records_inserted:,}")
         print(f"Previous count: {current_count:,}")
         print(f"Final count: {final_count:,}")
         print(f"Successful batches: {successful_batches:,}")
         print(f"Failed batches: {failed_batches:,}")
         print(f"Duration: {duration:.2f} seconds")
-        print(f"Records per second: {total_records / duration:,.0f}")
-        print(f"Memory used: {memory_used:.2f} MB")
-        print(f"Peak memory: {final_memory:.2f} MB")
-        
-        # Verify collection info
-        self.get_collection_stats()
+        if duration > 0:
+            print(f"Records per second: {records_inserted / duration:,.0f}")
 
     def get_collection_stats(self):
         """Get and display collection statistics"""
@@ -435,71 +240,34 @@ class PostgreSQLVectorPopulator:
                 # Get basic stats
                 cur.execute("SELECT COUNT(*) as total_points FROM vector_embeddings;")
                 total_points = cur.fetchone()['total_points']
-                
-                # Get vector dimension (pgvector stores dimensions in the type definition)
-                vector_dim = self.vector_dim  # We know it's 1024 from our setup
-                
+
                 # Get metadata stats
                 cur.execute("""
-                    SELECT 
+                    SELECT
                         AVG(LENGTH(metadata::TEXT)) as avg_metadata_size,
                         MIN(created_at) as earliest_record,
                         MAX(created_at) as latest_record
                     FROM vector_embeddings;
                 """)
                 metadata_stats = cur.fetchone()
-                
+
                 print(f"\n{'='*50}")
                 print(f"COLLECTION STATISTICS")
                 print(f"{'='*50}")
                 print(f"Database: {self.database}")
                 print(f"Total points: {total_points:,}")
-                print(f"Vector dimensions: {vector_dim}")
-                print(f"Average metadata size: {metadata_stats['avg_metadata_size']:.1f} characters")
-                print(f"Earliest record: {metadata_stats['earliest_record']}")
-                print(f"Latest record: {metadata_stats['latest_record']}")
+                print(f"Vector dimensions: {self.vector_dim}")
+                if metadata_stats['avg_metadata_size']:
+                    print(f"Average metadata size: {metadata_stats['avg_metadata_size']:.1f} characters")
+                if metadata_stats['earliest_record']:
+                    print(f"Earliest record: {metadata_stats['earliest_record']}")
+                if metadata_stats['latest_record']:
+                    print(f"Latest record: {metadata_stats['latest_record']}")
                 print(f"Index type: HNSW")
                 print(f"Distance metric: COSINE")
-                
+
         except Exception as e:
             print(f"Error getting collection stats: {e}")
-        finally:
-            conn.close()
-
-    def test_search(self, num_queries: int = 10):
-        """Test vector similarity search"""
-        print(f"\nTesting vector search with {num_queries} queries...")
-        
-        conn = self.get_connection()
-        try:
-            with conn.cursor() as cur:
-                total_time = 0
-                for i in range(num_queries):
-                    # Generate random query vector
-                    query_vector = self.generate_random_vector()
-                    
-                    start_time = time.time()
-                    cur.execute("""
-                        SELECT vector_id, text_content, metadata, 
-                               1 - (embedding <=> %s::vector) as similarity
-                        FROM vector_embeddings
-                        ORDER BY embedding <=> %s::vector
-                        LIMIT 10;
-                    """, (query_vector, query_vector))
-                    
-                    results = cur.fetchall()
-                    search_time = time.time() - start_time
-                    total_time += search_time
-                    
-                    if i == 0:  # Show first result as example
-                        print(f"Sample search result: {len(results)} matches, top similarity: {results[0][3]:.4f}")
-                
-                avg_search_time = total_time / num_queries
-                print(f"Average search time: {avg_search_time:.4f}s")
-                print(f"Search QPS: {1/avg_search_time:.2f}")
-                
-        except Exception as e:
-            print(f"Error during search test: {e}")
         finally:
             conn.close()
 
@@ -511,13 +279,13 @@ def main():
     parser.add_argument("--database", default="vectordb", help="Database name")
     parser.add_argument("--user", default="postgres", help="Database user")
     parser.add_argument("--password", default="postgres", help="Database password")
-    parser.add_argument("--records", type=int, default=10_000_000, help="Number of records to insert")
-    parser.add_argument("--workers", type=int, default=4, help="Number of worker threads")
+    parser.add_argument("--records", type=int, default=10_000, help="Number of records to insert")
     parser.add_argument("--vector-dim", type=int, default=1024, help="Vector dimension")
-    parser.add_argument("--test-search", action="store_true", help="Run search test after population")
-    
+    parser.add_argument("--batch-size", type=int, default=1000, help="Batch size for inserts")
+    parser.add_argument("--show-stats", action="store_true", help="Show collection stats after population")
+
     args = parser.parse_args()
-    
+
     # Create populator instance
     populator = PostgreSQLVectorPopulator(
         host=args.host,
@@ -527,21 +295,16 @@ def main():
         password=args.password
     )
     populator.vector_dim = args.vector_dim
-    
+    populator.batch_size = args.batch_size
+
     try:
-        # Create collection
-        populator.create_collection()
-        
         # Populate database
-        populator.populate_database(
-            total_records=args.records,
-            max_workers=args.workers
-        )
-        
-        # Test search if requested
-        if args.test_search:
-            populator.test_search()
-        
+        populator.populate_database(total_records=args.records)
+
+        # Show stats if requested
+        if args.show_stats:
+            populator.get_collection_stats()
+
     except KeyboardInterrupt:
         print("\nPopulation interrupted by user")
     except Exception as e:

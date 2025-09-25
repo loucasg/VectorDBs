@@ -5,7 +5,8 @@
       "Bash(psql:*)",
       "WebSearch",
       "Bash(python3:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(docker exec:*)"
     ],
     "deny": [],
     "ask": []
