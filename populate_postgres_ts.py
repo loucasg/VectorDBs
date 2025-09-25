@@ -10,6 +10,9 @@ import numpy as np
 import argparse
 from tqdm import tqdm
 import json
+from concurrent.futures import ThreadPoolExecutor
+import psutil
+import os
 
 class TimescaleDBPopulator:
     def __init__(self, host="localhost", port=5433, user="postgres", password="postgres", dbname="vectordb"):
@@ -120,18 +123,18 @@ class TimescaleDBPopulator:
         """Generate a random vector for testing"""
         return np.random.rand(self.vector_dim).astype(np.float32).tolist()
     
-    def insert_batch(self, vectors, text_contents, metadata_list, start_vector_id=None):
-        """Insert a batch of data into TimescaleDB"""
+    def get_connection(self):
+        """Get a new database connection for multi-threading"""
+        return psycopg2.connect(**self.connection_config)
+
+    def insert_batch(self, batch_data, start_vector_id):
+        """Insert a batch of data into TimescaleDB (thread-safe version)"""
+        conn = self.get_connection()
         try:
-            with self.conn.cursor() as cur:
-                # Get current max vector_id if not provided
-                if start_vector_id is None:
-                    cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings;")
-                    start_vector_id = cur.fetchone()[0]
-                
+            with conn.cursor() as cur:
                 # Prepare data for batch insert
                 data = []
-                for i, (vector, text, metadata) in enumerate(zip(vectors, text_contents, metadata_list)):
+                for i, (vector, text, metadata) in enumerate(batch_data):
                     data.append((start_vector_id + i + 1, vector, text, json.dumps(metadata)))
                 
                 # Batch insert using the new schema
@@ -140,11 +143,15 @@ class TimescaleDBPopulator:
                     VALUES (%s, %s::vector, %s, %s)
                 """, data)
                 
-                return True, len(vectors)
+                conn.commit()
+                return True, len(batch_data)
                 
         except Exception as e:
             print(f"❌ Error inserting batch: {e}")
+            conn.rollback()
             return False, 0
+        finally:
+            conn.close()
     
     def get_count(self):
         """Get the current count of records"""
@@ -176,8 +183,23 @@ class TimescaleDBPopulator:
         except Exception as e:
             print(f"⚠️  Could not retrieve collection stats: {e}")
     
-    def populate(self, num_records=100000, batch_size=1000):
-        """Populate the database with vector embeddings"""
+    def generate_batch_data(self, batch_size, start_id):
+        """Generate batch data for insertion"""
+        batch_data = []
+        for i in range(batch_size):
+            vector = self.generate_vector()
+            text = f"TimescaleDB+pgvectorscale document {start_id + i + 1}"
+            metadata = {
+                "source": "timescaledb_vectorscale", 
+                "batch": start_id // batch_size, 
+                "index": i, 
+                "extension": "pgvectorscale"
+            }
+            batch_data.append((vector, text, metadata))
+        return batch_data
+
+    def populate(self, num_records=100000, batch_size=1000, max_workers=4):
+        """Populate the database with vector embeddings using multi-threading"""
         print(f"\n{'='*50}")
         print(f"POPULATING TIMESCALEDB DATABASE")
         print(f"{'='*50}")
@@ -185,6 +207,7 @@ class TimescaleDBPopulator:
         print(f"Records to insert: {num_records:,}")
         print(f"Vector dimension: {self.vector_dim}")
         print(f"Batch size: {batch_size}")
+        print(f"Max workers: {max_workers}")
         print(f"Extension: pgvectorscale + DiskANN")
         
         if not self.connect():
@@ -218,43 +241,85 @@ class TimescaleDBPopulator:
         self.optimize_diskann()
         
         start_time = time.time()
-        total_inserted = 0
-        current_id = current_max_id
+        total_batches = (num_records + batch_size - 1) // batch_size
         
-        # Generate and insert data in batches
-        print(f"\n📝 Inserting {num_records:,} records in batches of {batch_size:,}...")
-        for batch_start in tqdm(range(0, num_records, batch_size), desc="Inserting batches"):
-            batch_end = min(batch_start + batch_size, num_records)
-            batch_size_actual = batch_end - batch_start
+        # Create progress bar
+        pbar = tqdm(total=num_records, desc="Inserting records", unit="records")
+        
+        # Track memory usage
+        process = psutil.Process(os.getpid())
+        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+        
+        successful_batches = 0
+        failed_batches = 0
+        total_inserted = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
             
-            # Generate batch data
-            vectors = [self.generate_vector() for _ in range(batch_size_actual)]
-            text_contents = [f"TimescaleDB+pgvectorscale document {current_id + i + 1}" for i in range(batch_size_actual)]
-            metadata_list = [{"source": "timescaledb_vectorscale", "batch": batch_start // batch_size, "index": i, "extension": "pgvectorscale"} 
-                           for i in range(batch_size_actual)]
+            for batch_idx in range(total_batches):
+                batch_start_id = current_max_id + (batch_idx * batch_size)
+                current_batch_size = min(batch_size, num_records - (batch_idx * batch_size))
+                
+                # Generate batch data
+                batch_data = self.generate_batch_data(current_batch_size, batch_start_id)
+                
+                # Submit batch for insertion
+                future = executor.submit(self.insert_batch, batch_data, batch_start_id)
+                futures.append(future)
+                
+                # Process completed futures
+                if len(futures) >= max_workers * 2:  # Keep some futures in flight
+                    completed_futures = []
+                    for future in futures:
+                        if future.done():
+                            success, inserted = future.result()
+                            if success:
+                                successful_batches += 1
+                                total_inserted += inserted
+                            else:
+                                failed_batches += 1
+                            completed_futures.append(future)
+                    
+                    # Remove completed futures
+                    for future in completed_futures:
+                        futures.remove(future)
+                        pbar.update(batch_size)
             
-            # Insert batch
-            success, inserted = self.insert_batch(vectors, text_contents, metadata_list, current_id)
-            if success:
-                total_inserted += inserted
-                current_id += inserted  # Update current_id for next batch
-            else:
-                print(f"❌ Failed to insert batch starting at {batch_start}")
-                break
+            # Wait for remaining futures
+            for future in futures:
+                success, inserted = future.result()
+                if success:
+                    successful_batches += 1
+                    total_inserted += inserted
+                else:
+                    failed_batches += 1
+                pbar.update(batch_size)
+        
+        pbar.close()
         
         end_time = time.time()
         duration = end_time - start_time
         
+        # Final memory usage
+        final_memory = process.memory_info().rss / 1024 / 1024  # MB
+        memory_used = final_memory - initial_memory
+        
+        # Get final count
+        final_count = self.get_count()
+        
         print(f"\n{'='*50}")
         print(f"POPULATION COMPLETED")
         print(f"{'='*50}")
-        print(f"Records inserted: {total_inserted:,}")
+        print(f"Records added: {total_inserted:,}")
+        print(f"Previous count: {current_count:,}")
+        print(f"Final count: {final_count:,}")
+        print(f"Successful batches: {successful_batches:,}")
+        print(f"Failed batches: {failed_batches:,}")
         print(f"Duration: {duration:.2f} seconds")
-        print(f"Records per second: {total_inserted/duration:.0f}")
-        
-        # Verify final count and get updated stats
-        final_count = self.get_count()
-        print(f"Total records in TimescaleDB: {final_count:,}")
+        print(f"Records per second: {total_inserted / duration:,.0f}")
+        print(f"Memory used: {memory_used:.2f} MB")
+        print(f"Peak memory: {final_memory:.2f} MB")
         
         # Get final collection stats
         print(f"\n{'='*50}")
@@ -282,6 +347,7 @@ def main():
     parser = argparse.ArgumentParser(description="Populate TimescaleDB with vector embeddings using pgvectorscale")
     parser.add_argument("--records", type=int, default=100000, help="Number of records to insert")
     parser.add_argument("--batch-size", type=int, default=1000, help="Batch size for inserts")
+    parser.add_argument("--workers", type=int, default=4, help="Number of worker threads")
     parser.add_argument("--host", default="localhost", help="TimescaleDB host")
     parser.add_argument("--port", type=int, default=5433, help="TimescaleDB port")
     parser.add_argument("--user", default="postgres", help="TimescaleDB user")
@@ -298,7 +364,7 @@ def main():
         dbname=args.dbname
     )
     
-    populator.populate(num_records=args.records, batch_size=args.batch_size)
+    populator.populate(num_records=args.records, batch_size=args.batch_size, max_workers=args.workers)
 
 if __name__ == "__main__":
     main()
