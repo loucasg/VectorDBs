@@ -31,7 +31,7 @@ class TimescaleDBVectorPopulator:
         self.user = user
         self.password = password
         self.vector_dim = 1024
-        self.batch_size = 500  # Smaller batches to reduce lock contention
+        self.batch_size = 200  # Very small batches for TimescaleDB
         self.chunk_time_interval = "1 day"  # TimescaleDB hypertable chunk interval
 
     def get_connection(self):
@@ -351,9 +351,9 @@ class TimescaleDBVectorPopulator:
                 cur.execute("SET work_mem = '256MB';")
                 cur.execute("SET maintenance_work_mem = '1GB';")
 
-                # Reduce lock timeout to fail fast on deadlocks
-                cur.execute("SET lock_timeout = '5s';")
-                cur.execute("SET deadlock_timeout = '1s';")
+                # Set reasonable timeouts for TimescaleDB
+                cur.execute("SET lock_timeout = '30s';")
+                cur.execute("SET statement_timeout = '60s';")
 
                 # Use a single transaction with immediate commit
                 # Prepare batch insert (no ON CONFLICT since we don't have unique constraint)
@@ -402,7 +402,7 @@ class TimescaleDBVectorPopulator:
         finally:
             conn.close()
 
-    def populate_database(self, total_records: int = 10_000_000, max_workers: int = 2,
+    def populate_database(self, total_records: int = 10_000_000, max_workers: int = 1,
                          time_spread_days: int = 30):
         """Populate the database with time-series optimized records"""
         print(f"\n{'='*60}")
@@ -460,13 +460,17 @@ class TimescaleDBVectorPopulator:
                 current_batch_size = min(self.batch_size, total_records - (batch_idx * self.batch_size))
 
                 # Create batch data with time-series distribution
+                # For TimescaleDB, order by time to minimize chunk switching
                 batch_data = []
+                batch_base_time = start_time + timedelta(
+                    seconds=int((batch_idx / total_batches) * time_spread_days * 24 * 3600)
+                )
+
                 for i in range(current_batch_size):
                     record_id = batch_start_id + i
-                    # Distribute records across time range
-                    time_progress = (batch_idx * self.batch_size + i) / total_records
-                    record_time = start_time + timedelta(
-                        seconds=int(time_progress * time_spread_days * 24 * 3600)
+                    # Keep timestamps close together within batch
+                    record_time = batch_base_time + timedelta(
+                        seconds=random.randint(0, 3600)  # Within 1 hour of batch time
                     )
 
                     chunk_data = self.generate_chunk_data_with_timestamp(record_id, record_time)
@@ -679,7 +683,7 @@ def main():
     parser.add_argument("--user", default="postgres", help="Database user")
     parser.add_argument("--password", default="postgres", help="Database password")
     parser.add_argument("--records", type=int, default=10_000_000, help="Number of records to insert")
-    parser.add_argument("--workers", type=int, default=2, help="Number of worker threads")
+    parser.add_argument("--workers", type=int, default=1, help="Number of worker threads")
     parser.add_argument("--vector-dim", type=int, default=1024, help="Vector dimension")
     parser.add_argument("--time-spread-days", type=int, default=30, help="Spread data across N days")
     parser.add_argument("--chunk-interval", default="1 day", help="TimescaleDB chunk time interval")
