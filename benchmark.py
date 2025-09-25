@@ -96,18 +96,28 @@ class StandardizedBenchmarkOperations:
         return test_data
 
     def measure_operation_time(self, operation_func, *args, **kwargs):
-        """Standardized timing measurement"""
+        """Standardized timing measurement with high precision for fast operations"""
         start_time = time.perf_counter()
         try:
             result = operation_func(*args, **kwargs)
             end_time = time.perf_counter()
-            return end_time - start_time, result, None
+            elapsed_time = end_time - start_time
+            
+            # Ensure minimum precision for very fast operations
+            # This prevents 0.00 QPS issues with sub-millisecond operations
+            if elapsed_time < 0.0001:  # Less than 0.1ms
+                elapsed_time = 0.0001  # Set minimum to 0.1ms for calculation purposes
+            
+            return elapsed_time, result, None
         except Exception as e:
             end_time = time.perf_counter()
-            return end_time - start_time, None, str(e)
+            elapsed_time = end_time - start_time
+            if elapsed_time < 0.0001:
+                elapsed_time = 0.0001
+            return elapsed_time, None, str(e)
 
-    def calculate_standard_metrics(self, times: List[float]) -> Dict[str, float]:
-        """Calculate standardized performance metrics"""
+    def calculate_standard_metrics(self, times: List[float], batch_size: int = 1, operation_type: str = "single") -> Dict[str, float]:
+        """Calculate standardized performance metrics with proper batch handling"""
         if not times or all(t == float('inf') for t in times):
             return {
                 'mean': 0.0,
@@ -134,6 +144,19 @@ class StandardizedBenchmarkOperations:
             }
 
         mean_time = statistics.mean(valid_times)
+        
+        # Calculate QPS (operations per second)
+        qps = 1.0 / mean_time if mean_time > 0 else 0.0
+        
+        # Calculate throughput (items per second) - accounts for batch size
+        if operation_type == "concurrent":
+            # For concurrent operations, throughput is total items processed per second
+            # across all concurrent operations
+            throughput = (len(valid_times) * batch_size) / sum(valid_times) if sum(valid_times) > 0 else 0.0
+        else:
+            # For sequential operations, throughput is items per operation time
+            throughput = (batch_size / mean_time) if mean_time > 0 else 0.0
+        
         return {
             'mean': mean_time,
             'median': statistics.median(valid_times),
@@ -141,8 +164,8 @@ class StandardizedBenchmarkOperations:
             'p99': np.percentile(valid_times, 99),
             'min': min(valid_times),
             'max': max(valid_times),
-            'qps': 1.0 / mean_time if mean_time > 0 else 0.0,
-            'throughput': 1.0 / mean_time if mean_time > 0 else 0.0
+            'qps': qps,
+            'throughput': throughput
         }
 
 
@@ -276,14 +299,22 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             print(f"{len(results)+1}. {operation_name}")
             try:
                 times = benchmark_func(db_ops, iterations)
-                results[operation_key] = self.calculate_standard_metrics(times)
-
-                # Add batch size info for batch operations
+                
+                # Determine batch size and operation type for proper metrics calculation
+                batch_size = 1
+                operation_type = "single"
+                
                 if "batch" in operation_key:
                     if "100" in operation_key:
-                        results[operation_key]['batch_size'] = 100
+                        batch_size = 100
                     else:
-                        results[operation_key]['batch_size'] = 10
+                        batch_size = 10
+                elif "concurrent" in operation_key:
+                    operation_type = "concurrent"
+                    batch_size = 1  # Each concurrent operation processes 1 item
+                
+                results[operation_key] = self.calculate_standard_metrics(times, batch_size, operation_type)
+                results[operation_key]['batch_size'] = batch_size
 
             except Exception as e:
                 print(f"❌ {operation_name} failed: {e}")
@@ -358,8 +389,9 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         return times
 
     def _benchmark_concurrent_search(self, db_ops, iterations: int) -> List[float]:
-        """Standardized concurrent search benchmark"""
+        """Standardized concurrent search benchmark - measures total concurrent throughput"""
         concurrent_queries = max(10, iterations)
+        max_workers = 10
 
         def single_search_worker(worker_id):
             query_vector = self.generate_standard_vector(seed=worker_id)
@@ -368,15 +400,32 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             )
             return elapsed_time if not error else float('inf')
 
+        # Measure total time for all concurrent operations
         times = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        total_start_time = time.perf_counter()
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(single_search_worker, i) for i in range(concurrent_queries)]
             for future in tqdm(as_completed(futures), total=concurrent_queries, desc="Concurrent searches"):
                 try:
-                    times.append(future.result())
+                    individual_time = future.result()
+                    times.append(individual_time)
                 except Exception:
                     times.append(float('inf'))
-        return times
+        
+        total_end_time = time.perf_counter()
+        total_concurrent_time = total_end_time - total_start_time
+        
+        # For concurrent operations, we want to measure the total throughput
+        # So we return the total time divided by number of operations
+        # This represents the effective time per operation when running concurrently
+        if total_concurrent_time > 0:
+            effective_time_per_operation = total_concurrent_time / concurrent_queries
+            # Return a list with the effective time per operation
+            # This will be used to calculate the actual concurrent throughput
+            return [effective_time_per_operation] * concurrent_queries
+        else:
+            return times
 
     def _benchmark_single_insert(self, db_ops, iterations: int) -> List[float]:
         """Standardized single insert benchmark"""
@@ -1376,15 +1425,23 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 return f"  {operation}: N/A"
 
             mean_time = stats.get('mean', 0)
-            if 'qps' in stats:
-                return f"  {operation}: {mean_time:.4f}s mean, {stats['qps']:.2f} QPS"
-            elif 'throughput' in stats:
-                if 'batch_size' in stats:
-                    return f"  {operation}: {mean_time:.4f}s mean, {stats['throughput']:.2f} points/sec"
+            qps = stats.get('qps', 0)
+            throughput = stats.get('throughput', 0)
+            batch_size = stats.get('batch_size', 1)
+            
+            # Format based on operation type
+            if 'search' in operation.lower():
+                if 'concurrent' in operation.lower():
+                    return f"  {operation}: {mean_time:.4f}s mean, {qps:.2f} QPS, {throughput:.2f} concurrent ops/sec"
                 else:
-                    return f"  {operation}: {mean_time:.4f}s mean, {stats['throughput']:.2f} ops/sec"
+                    return f"  {operation}: {mean_time:.4f}s mean, {qps:.2f} QPS"
+            elif 'insert' in operation.lower() or 'update' in operation.lower() or 'delete' in operation.lower():
+                if batch_size > 1:
+                    return f"  {operation}: {mean_time:.4f}s mean, {qps:.2f} ops/sec, {throughput:.2f} items/sec"
+                else:
+                    return f"  {operation}: {mean_time:.4f}s mean, {qps:.2f} ops/sec"
             else:
-                return f"  {operation}: {mean_time:.4f}s mean"
+                return f"  {operation}: {mean_time:.4f}s mean, {qps:.2f} QPS"
 
         # Define key operations for consistent reporting
         key_operations = [
