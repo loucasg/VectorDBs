@@ -34,9 +34,9 @@ services:
       retries: 5
 
   # TimescaleDB with pgvector (PostgreSQL 17)
-  postgres-ts:
+  timescaledb:
     image: timescale/timescaledb-ha:pg17
-    container_name: postgres_ts_vector_db
+    container_name: timescaledb
     ports:
       - "5433:5432"  # Different port to avoid conflict
     environment:
@@ -45,7 +45,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - TIMESCALEDB_TELEMETRY=off
     volumes:
-      - ./data/postgres-ts/data:/home/postgres/pgdata/data
+      - ./data/timescaledb:/var/lib/postgresql/data
       - ./init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql
     restart: unless-stopped
     healthcheck:
