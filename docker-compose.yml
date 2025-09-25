@@ -37,15 +37,16 @@ services:
   timescaledb:
     image: timescale/timescaledb-ha:pg17
     container_name: timescaledb_vector_db
-    ports:
-      - "5433:5432"  # Different port to avoid conflict
+    ports: 
+     - "5433:5432"
     environment:
-      - POSTGRES_DB=vectordb
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - TIMESCALEDB_TELEMETRY=off
+     - POSTGRES_DB=vectordb
+     - POSTGRES_USER=postgres
+     - POSTGRES_PASSWORD=postgres
+     - TIMESCALEDB_TELEMETRY=off
+     - PGDATA=/home/postgres/pgdata/data      
     volumes:
-      - ./data/timescaledb:/var/lib/postgresql/data
+      - ./data/timescaledb:/home/postgres/pgdata/data
       - ./init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql
     restart: unless-stopped
     healthcheck:
