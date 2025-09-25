@@ -658,31 +658,20 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
     def _get_timescaledb_operations(self):
         """Get TimescaleDB-specific database operations with pgvectorscale and DiskANN optimization"""
         
-        def optimize_diskann():
-            """Optimize DiskANN for better benchmark performance"""
-            conn = psycopg2.connect(**self.postgres_ts_config)
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT optimize_diskann_query(400, true);")
-                    result = cur.fetchone()[0]
-                    print(f"🔧 TimescaleDB DiskANN optimization: {result}")
-            except Exception as e:
-                print(f"⚠️  Could not optimize DiskANN: {e}")
-            finally:
-                conn.close()
-        
-        # Optimize DiskANN before returning operations
-        optimize_diskann()
+        # Note: DiskANN optimization not available, using standard vector operations
         
         def single_search(query_vector):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Use the optimized pgvectorscale function with DiskANN
+                    # Use standard vector search with TimescaleDB table
                     cur.execute("""
-                        SELECT vector_id, text_content, metadata, similarity, distance
-                        FROM search_similar_vectors(%s::vector, 10, 0.0, true);
-                    """, (query_vector,))
+                        SELECT vector_id, text_content, metadata,
+                               1 - (embedding <=> %s::vector) AS similarity
+                        FROM vector_embeddings_ts
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT 10;
+                    """, (query_vector, query_vector))
                     return cur.fetchall()
             finally:
                 conn.close()
@@ -692,24 +681,15 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 results = []
                 with conn.cursor() as cur:
-                    # Use the optimized batch search function with DiskANN
-                    cur.execute("""
-                        SELECT query_index, vector_id, text_content, metadata, similarity
-                        FROM search_similar_vectors_batch(%s::vector[], 10, 0.0);
-                    """, (query_vectors,))
-                    batch_results = cur.fetchall()
-                    
-                    # Group results by query_index
-                    query_groups = {}
-                    for row in batch_results:
-                        query_idx = row[0]
-                        if query_idx not in query_groups:
-                            query_groups[query_idx] = []
-                        query_groups[query_idx].append(row[1:])  # Skip query_index
-                    
-                    # Return results in order
-                    for i in range(len(query_vectors)):
-                        results.append(query_groups.get(i, []))
+                    for query_vector in query_vectors:
+                        cur.execute("""
+                            SELECT vector_id, text_content, metadata,
+                                   1 - (embedding <=> %s::vector) AS similarity
+                            FROM vector_embeddings_ts
+                            ORDER BY embedding <=> %s::vector
+                            LIMIT 10;
+                        """, (query_vector, query_vector))
+                        results.append(cur.fetchall())
                 return results
             finally:
                 conn.close()
@@ -718,14 +698,14 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Use optimized search with filtering and DiskANN
                     cur.execute("""
-                        SELECT vector_id, text_content, metadata, similarity, distance
-                        FROM search_similar_vectors(%s::vector, 10, 0.0, true)
+                        SELECT vector_id, text_content, metadata,
+                               1 - (embedding <=> %s::vector) AS similarity
+                        FROM vector_embeddings_ts
                         WHERE metadata->>'category' = %s
-                        ORDER BY distance
+                        ORDER BY embedding <=> %s::vector
                         LIMIT 10;
-                    """, (query_vector, filter_category))
+                    """, (query_vector, filter_category, query_vector))
                     return cur.fetchall()
             finally:
                 conn.close()
@@ -747,15 +727,10 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Use the new schema with composite primary key (vector_id, created_at)
+                    # Simple insert without ON CONFLICT (matches our populate script)
                     cur.execute("""
                         INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
-                        VALUES (%s, %s::vector, %s, %s)
-                        ON CONFLICT (vector_id, created_at) DO UPDATE SET
-                        embedding = EXCLUDED.embedding,
-                        text_content = EXCLUDED.text_content,
-                        metadata = EXCLUDED.metadata,
-                        updated_at = CURRENT_TIMESTAMP;
+                        VALUES (%s, %s::vector, %s, %s);
                     """, (test_data["id"], test_data["vector"],
                          test_data["payload"]["text_content"],
                          json.dumps(test_data["payload"]["metadata"])))
@@ -777,12 +752,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
 
                     cur.execute(f"""
                         INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
-                        VALUES {', '.join(values)}
-                        ON CONFLICT (vector_id, created_at) DO UPDATE SET
-                        embedding = EXCLUDED.embedding,
-                        text_content = EXCLUDED.text_content,
-                        metadata = EXCLUDED.metadata,
-                        updated_at = CURRENT_TIMESTAMP;
+                        VALUES {', '.join(values)};
                     """)
                     conn.commit()
             finally:
@@ -801,11 +771,12 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 conn.close()
 
         def get_collection_stats():
-            """Get TimescaleDB collection statistics with pgvectorscale info"""
+            """Get TimescaleDB collection statistics"""
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT * FROM get_collection_stats();")
+                    # Use the custom stats function from our populate script
+                    cur.execute("SELECT * FROM get_timescale_collection_stats();")
                     stats = cur.fetchone()
                     if stats:
                         print(f"📊 TimescaleDB Collection Stats:")
@@ -813,37 +784,18 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                         print(f"   Vector dimensions: {stats[1]}")
                         print(f"   Avg metadata size: {stats[2]:.2f} bytes")
                         print(f"   Created at range: {stats[3]}")
-                        print(f"   Hypertable info: {stats[4]}")
-                        print(f"   DiskANN indexes: {stats[5]}")
-                        print(f"   Index sizes: {stats[6]}")
+                        print(f"   Hypertable size: {stats[4]}")
+                        print(f"   Total chunks: {stats[5]}")
+                        print(f"   Compressed chunks: {stats[6]}")
                     return stats
             except Exception as e:
-                print(f"⚠️  Could not retrieve collection stats: {e}")
+                print(f"⚠️  Could not retrieve TimescaleDB stats: {e}")
                 return None
             finally:
                 conn.close()
 
-        def get_diskann_stats():
-            """Get DiskANN index statistics"""
-            conn = psycopg2.connect(**self.postgres_ts_config)
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT * FROM get_diskann_index_stats();")
-                    stats = cur.fetchall()
-                    if stats:
-                        print(f"📊 TimescaleDB DiskANN Index Statistics:")
-                        for stat in stats:
-                            print(f"   {stat[0]}: {stat[1]} ({stat[2]})")
-                    return stats
-            except Exception as e:
-                print(f"⚠️  Could not retrieve DiskANN stats: {e}")
-                return None
-            finally:
-                conn.close()
-
-        # Get collection and DiskANN statistics
+        # Get collection statistics
         get_collection_stats()
-        get_diskann_stats()
 
         return {
             "single_search": single_search,

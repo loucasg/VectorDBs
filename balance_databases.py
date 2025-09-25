@@ -149,11 +149,11 @@ class DatabaseBalancer:
         try:
             conn = psycopg2.connect(**self.postgres_ts_config)
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
+                cur.execute("SELECT COUNT(*) FROM vector_embeddings_ts;")
                 count = cur.fetchone()[0]
                 
                 # Get vector dimension by parsing the vector string
-                cur.execute("SELECT embedding FROM vector_embeddings LIMIT 1;")
+                cur.execute("SELECT embedding FROM vector_embeddings_ts LIMIT 1;")
                 result = cur.fetchone()
                 if result and result[0]:
                     # Parse the vector string to get dimension
@@ -332,7 +332,7 @@ class DatabaseBalancer:
             
             # Get current max ID
             with conn.cursor() as cur:
-                cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings;")
+                cur.execute("SELECT COALESCE(MAX(vector_id), 0) FROM vector_embeddings_ts;")
                 max_id = cur.fetchone()[0]
             
             # Generate records in batches
@@ -350,7 +350,7 @@ class DatabaseBalancer:
                     values.append(f"({vector_id}, ARRAY{vector}::vector, '{text_content}', '{metadata}')")
                 
                 insert_query = f"""
-                    INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
+                    INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
                     VALUES {', '.join(values)};
                 """
                 
