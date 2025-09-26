@@ -905,7 +905,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 with conn.cursor() as cur:
                     # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    cur.execute("SELECT optimize_for_vector_operations();")
                     
                     # Use standard vector search with TimescaleDB table
                     cur.execute("""
@@ -925,7 +925,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 results = []
                 with conn.cursor() as cur:
                     # Apply TimescaleDB optimizations once
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    cur.execute("SELECT optimize_for_vector_operations();")
                     
                     for query_vector in query_vectors:
                         cur.execute("""
@@ -945,7 +945,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 with conn.cursor() as cur:
                     # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    cur.execute("SELECT optimize_for_vector_operations();")
                     
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
@@ -977,7 +977,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 with conn.cursor() as cur:
                     # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    cur.execute("SELECT optimize_for_vector_operations();")
                     
                     # Insert with created_at for hypertable partitioning
                     cur.execute("""
@@ -995,7 +995,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 with conn.cursor() as cur:
                     # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    cur.execute("SELECT optimize_for_vector_operations();")
                     
                     # Try to use optimized bulk insert function first
                     try:
@@ -1421,7 +1421,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
 
         return comparison_results
 
-    def run_load_test(self, read_collection: str, write_collection: str, duration: int = 120):
+    def run_load_test(self, read_collection: str, write_collection: str, duration: int = 120, use_postgres_only: bool = False):
         """Run system load test with continuous operations"""
         print(f"{'='*60}")
         print(f"LOAD TEST ({duration} seconds) - Collection: {read_collection}")
@@ -1432,22 +1432,64 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         def continuous_reads():
             try:
                 query_vector = self.generate_standard_vector()
-                self.qdrant_client.query_points(
-                    collection_name=read_collection,
-                    query=query_vector,
-                    limit=10
-                )
+                if use_postgres_only:
+                    # Use PostgreSQL for load test
+                    conn = psycopg2.connect(**self.postgres_config)
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT optimize_for_vector_queries();")
+                            cur.execute("""
+                                SELECT vector_id, text_content, metadata,
+                                       1 - (embedding <=> %s::vector) AS similarity
+                                FROM vector_embeddings
+                                ORDER BY embedding <=> %s::vector
+                                LIMIT 10;
+                            """, (query_vector, query_vector))
+                            cur.fetchall()
+                    finally:
+                        conn.close()
+                else:
+                    # Use Qdrant for load test
+                    self.qdrant_client.query_points(
+                        collection_name=read_collection,
+                        query=query_vector,
+                        limit=10
+                    )
             except Exception as e:
                 print(f"Error in continuous reads: {e}")
 
         def continuous_writes():
             try:
-                points = [self.generate_test_point(self.next_id + i) for i in range(100)]
-                self.qdrant_client.upsert(
-                    collection_name=write_collection,
-                    points=points
-                )
-                self.next_id += 100
+                if use_postgres_only:
+                    # Use PostgreSQL for load test
+                    conn = psycopg2.connect(**self.postgres_config)
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT optimize_for_vector_queries();")
+                            test_data = self.generate_test_vectors(1, self.next_id)[0]
+                            cur.execute("""
+                                INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata, created_at)
+                                VALUES (%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)
+                                ON CONFLICT (vector_id, created_at) DO UPDATE SET
+                                embedding = EXCLUDED.embedding,
+                                text_content = EXCLUDED.text_content,
+                                metadata = EXCLUDED.metadata,
+                                updated_at = CURRENT_TIMESTAMP;
+                            """, (test_data["id"], test_data["vector"],
+                                 test_data["payload"]["text_content"],
+                                 json.dumps(test_data["payload"]["metadata"])))
+                            conn.commit()
+                    finally:
+                        conn.close()
+                    self.next_id += 1
+                else:
+                    # Use Qdrant for load test
+                    points = [self.generate_test_point(self.next_id + i) for i in range(100)]
+                    self.qdrant_client.upsert(
+                        collection_name=write_collection,
+                        points=points
+                    )
+                    self.next_id += 100
             except Exception as e:
                 print(f"Error in continuous writes: {e}")
 
@@ -1603,7 +1645,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 print("="*60)
                 print("RUNNING LOAD TEST")
                 print("="*60)
-                results["load_test"] = self.run_load_test(read_collection, write_collection, load_duration)
+                results["load_test"] = self.run_load_test(read_collection, write_collection, load_duration, use_postgres_only=(run_postgres and run_postgres_ts and not run_read))
             
             # Print summary
             self.print_summary(results)
@@ -1713,6 +1755,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         # Extract performance data from all databases
         qdrant_benchmark = results.get("qdrant_benchmark", {})
         postgres = results.get("postgres_benchmark", {})
+        postgres_ts = results.get("postgres_ts_benchmark", {})
         milvus = results.get("milvus_benchmark", {})
         weaviate = results.get("weaviate_benchmark", {})
         
@@ -1722,6 +1765,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             databases_with_data.append("Qdrant")
         if postgres:
             databases_with_data.append("PostgreSQL")
+        if postgres_ts and "error" not in postgres_ts:
+            databases_with_data.append("TimescaleDB")
         if milvus and "error" not in milvus:
             databases_with_data.append("Milvus")
         if weaviate and "error" not in weaviate:
