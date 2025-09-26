@@ -228,9 +228,11 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             # Try PostgreSQL as fallback
             conn = psycopg2.connect(**self.postgres_config)
             with conn.cursor() as cur:
+                # Use vector_dims function for accurate dimension detection
                 cur.execute("""
-                    SELECT array_length(embedding::float[], 1) 
+                    SELECT vector_dims(embedding) 
                     FROM vector_embeddings 
+                    WHERE embedding IS NOT NULL
                     LIMIT 1;
                 """)
                 result = cur.fetchone()
@@ -252,6 +254,163 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             "python_version": os.sys.version,
             "platform": os.name
         }
+    
+    def get_database_record_counts(self, collection_name: str = "test_vectors", weaviate_class: str = "TestVectors"):
+        """Get record counts for all databases"""
+        counts = {}
+        
+        # Qdrant
+        try:
+            collection_info = self.qdrant_client.get_collection(collection_name)
+            counts["qdrant"] = {
+                "success": True,
+                "count": collection_info.points_count,
+                "collection_name": collection_name,
+                "vector_dim": collection_info.config.params.vectors.size,
+                "distance_metric": collection_info.config.params.vectors.distance.name
+            }
+        except Exception as e:
+            counts["qdrant"] = {"success": False, "error": str(e)}
+        
+        # PostgreSQL
+        try:
+            conn = psycopg2.connect(**self.postgres_config)
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM vector_embeddings;")
+                count = cur.fetchone()[0]
+                # Get vector dimension using vector_dims function
+                cur.execute("SELECT vector_dims(embedding) FROM vector_embeddings WHERE embedding IS NOT NULL LIMIT 1;")
+                result = cur.fetchone()
+                vector_dim = result[0] if result and result[0] else 0
+                counts["postgres"] = {
+                    "success": True,
+                    "count": count,
+                    "vector_dim": vector_dim
+                }
+        except Exception as e:
+            counts["postgres"] = {"success": False, "error": str(e)}
+        finally:
+            if 'conn' in locals():
+                conn.close()
+        
+        # TimescaleDB
+        try:
+            conn = psycopg2.connect(**self.postgres_ts_config)
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM vector_embeddings_ts;")
+                count = cur.fetchone()[0]
+                # Get vector dimension using vector_dims function
+                cur.execute("SELECT vector_dims(embedding) FROM vector_embeddings_ts WHERE embedding IS NOT NULL LIMIT 1;")
+                result = cur.fetchone()
+                vector_dim = result[0] if result and result[0] else 0
+                counts["timescaledb"] = {
+                    "success": True,
+                    "count": count,
+                    "vector_dim": vector_dim
+                }
+        except Exception as e:
+            counts["timescaledb"] = {"success": False, "error": str(e)}
+        finally:
+            if 'conn' in locals():
+                conn.close()
+        
+        # Milvus
+        if MILVUS_AVAILABLE:
+            try:
+                connections.connect(alias="count_check", host=self.milvus_host, port=self.milvus_port)
+                collection = Collection(collection_name, using="count_check")
+                count = collection.num_entities
+                counts["milvus"] = {
+                    "success": True,
+                    "count": count,
+                    "collection_name": collection_name
+                }
+                connections.disconnect("count_check")
+            except Exception as e:
+                counts["milvus"] = {"success": False, "error": str(e)}
+        else:
+            counts["milvus"] = {"success": False, "error": "Milvus not available"}
+        
+        # Weaviate
+        if WEAVIATE_AVAILABLE:
+            try:
+                client = weaviate.connect_to_local(host=self.weaviate_host, port=self.weaviate_port)
+                collection = client.collections.get(weaviate_class)
+                count = collection.aggregate.over_all(total_count=True).total_count
+                counts["weaviate"] = {
+                    "success": True,
+                    "count": count,
+                    "class_name": weaviate_class
+                }
+                client.close()
+            except Exception as e:
+                counts["weaviate"] = {"success": False, "error": str(e)}
+        else:
+            counts["weaviate"] = {"success": False, "error": "Weaviate not available"}
+        
+        return counts
+    
+    def display_database_record_counts(self, counts: dict):
+        """Display database record counts in a formatted way"""
+        print("="*80)
+        print("DATABASE RECORD COUNTS")
+        print("="*80)
+        
+        # Qdrant
+        if "qdrant" in counts:
+            qdrant = counts["qdrant"]
+            if qdrant["success"]:
+                print(f"🔍 QDRANT:")
+                print(f"   Collection: {qdrant['collection_name']}")
+                print(f"   Records: {qdrant['count']:,}")
+                print(f"   Vector Dimension: {qdrant['vector_dim']}")
+                print(f"   Distance Metric: {qdrant['distance_metric']}")
+            else:
+                print(f"🔍 QDRANT: ❌ Error - {qdrant['error']}")
+        
+        # PostgreSQL
+        if "postgres" in counts:
+            postgres = counts["postgres"]
+            if postgres["success"]:
+                print(f"🐘 POSTGRESQL:")
+                print(f"   Table: vector_embeddings")
+                print(f"   Records: {postgres['count']:,}")
+                print(f"   Vector Dimension: {postgres['vector_dim']}")
+            else:
+                print(f"🐘 POSTGRESQL: ❌ Error - {postgres['error']}")
+        
+        # TimescaleDB
+        if "timescaledb" in counts:
+            timescale = counts["timescaledb"]
+            if timescale["success"]:
+                print(f"⏰ TIMESCALEDB:")
+                print(f"   Table: vector_embeddings_ts")
+                print(f"   Records: {timescale['count']:,}")
+                print(f"   Vector Dimension: {timescale['vector_dim']}")
+            else:
+                print(f"⏰ TIMESCALEDB: ❌ Error - {timescale['error']}")
+        
+        # Milvus
+        if "milvus" in counts:
+            milvus = counts["milvus"]
+            if milvus["success"]:
+                print(f"🚀 MILVUS:")
+                print(f"   Collection: {milvus['collection_name']}")
+                print(f"   Records: {milvus['count']:,}")
+            else:
+                print(f"🚀 MILVUS: ❌ Error - {milvus['error']}")
+        
+        # Weaviate
+        if "weaviate" in counts:
+            weaviate = counts["weaviate"]
+            if weaviate["success"]:
+                print(f"🔮 WEAVIATE:")
+                print(f"   Class: {weaviate['class_name']}")
+                print(f"   Records: {weaviate['count']:,}")
+            else:
+                print(f"🔮 WEAVIATE: ❌ Error - {weaviate['error']}")
+        
+        print("="*80)
     
     def generate_qdrant_point(self, point_id: int) -> PointStruct:
         """Generate a standardized Qdrant test point"""
@@ -581,6 +740,9 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
+                    # Apply optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
                                1 - (embedding <=> %s::vector) AS similarity
@@ -597,6 +759,9 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 results = []
                 with conn.cursor() as cur:
+                    # Apply optimizations once
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
                     for query_vector in query_vectors:
                         cur.execute("""
                             SELECT vector_id, text_content, metadata,
@@ -614,6 +779,9 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
+                    # Apply optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
                                1 - (embedding <=> %s::vector) AS similarity
@@ -643,13 +811,18 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
+                    # Apply optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
+                    # Insert with created_at for partitioning
                     cur.execute("""
-                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
-                        VALUES (%s, %s::vector, %s, %s)
-                        ON CONFLICT (vector_id) DO UPDATE SET
+                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata, created_at)
+                        VALUES (%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (vector_id, created_at) DO UPDATE SET
                         embedding = EXCLUDED.embedding,
                         text_content = EXCLUDED.text_content,
-                        metadata = EXCLUDED.metadata;
+                        metadata = EXCLUDED.metadata,
+                        updated_at = CURRENT_TIMESTAMP;
                     """, (test_data["id"], test_data["vector"],
                          test_data["payload"]["text_content"],
                          json.dumps(test_data["payload"]["metadata"])))
@@ -661,23 +834,41 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
-                    values = []
-                    for data in test_data_list:
-                        values.append(cur.mogrify("(%s, %s::vector, %s, %s)", (
-                            data["id"], data["vector"],
-                            data["payload"]["text_content"],
-                            json.dumps(data["payload"]["metadata"])
-                        )).decode('utf-8'))
+                    # Apply optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
+                    # Try to use optimized bulk insert function first
+                    try:
+                        vector_ids = [data["id"] for data in test_data_list]
+                        embeddings = [data["vector"] for data in test_data_list]
+                        text_contents = [data["payload"]["text_content"] for data in test_data_list]
+                        metadatas = [json.dumps(data["payload"]["metadata"]) for data in test_data_list]
+                        
+                        cur.execute("""
+                            SELECT bulk_insert_vectors_optimized(%s::BIGINT[], %s::VECTOR[], %s::TEXT[], %s::JSONB[]);
+                        """, (vector_ids, embeddings, text_contents, metadatas))
+                        conn.commit()
+                    except Exception:
+                        # Fallback to manual batch insert
+                        conn.rollback()
+                        values = []
+                        for data in test_data_list:
+                            values.append(cur.mogrify("(%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)", (
+                                data["id"], data["vector"],
+                                data["payload"]["text_content"],
+                                json.dumps(data["payload"]["metadata"])
+                            )).decode('utf-8'))
 
-                    cur.execute(f"""
-                        INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata)
-                        VALUES {', '.join(values)}
-                        ON CONFLICT (vector_id) DO UPDATE SET
-                        embedding = EXCLUDED.embedding,
-                        text_content = EXCLUDED.text_content,
-                        metadata = EXCLUDED.metadata;
-                    """)
-                    conn.commit()
+                        cur.execute(f"""
+                            INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata, created_at)
+                            VALUES {', '.join(values)}
+                            ON CONFLICT (vector_id, created_at) DO UPDATE SET
+                            embedding = EXCLUDED.embedding,
+                            text_content = EXCLUDED.text_content,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = CURRENT_TIMESTAMP;
+                        """)
+                        conn.commit()
             finally:
                 conn.close()
 
@@ -713,6 +904,9 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
+                    # Apply TimescaleDB optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
                     # Use standard vector search with TimescaleDB table
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
@@ -730,6 +924,9 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 results = []
                 with conn.cursor() as cur:
+                    # Apply TimescaleDB optimizations once
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
                     for query_vector in query_vectors:
                         cur.execute("""
                             SELECT vector_id, text_content, metadata,
@@ -747,6 +944,9 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
+                    # Apply TimescaleDB optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
                                1 - (embedding <=> %s::vector) AS similarity
@@ -776,10 +976,13 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Simple insert without ON CONFLICT (matches our populate script)
+                    # Apply TimescaleDB optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
+                    # Insert with created_at for hypertable partitioning
                     cur.execute("""
-                        INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
-                        VALUES (%s, %s::vector, %s, %s);
+                        INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata, created_at)
+                        VALUES (%s, %s::vector, %s, %s, CURRENT_TIMESTAMP);
                     """, (test_data["id"], test_data["vector"],
                          test_data["payload"]["text_content"],
                          json.dumps(test_data["payload"]["metadata"])))
@@ -791,19 +994,36 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    values = []
-                    for data in test_data_list:
-                        values.append(cur.mogrify("(%s, %s::vector, %s, %s)", (
-                            data["id"], data["vector"],
-                            data["payload"]["text_content"],
-                            json.dumps(data["payload"]["metadata"])
-                        )).decode('utf-8'))
+                    # Apply TimescaleDB optimizations
+                    cur.execute("SELECT optimize_for_vector_queries();")
+                    
+                    # Try to use optimized bulk insert function first
+                    try:
+                        vector_ids = [data["id"] for data in test_data_list]
+                        embeddings = [data["vector"] for data in test_data_list]
+                        text_contents = [data["payload"]["text_content"] for data in test_data_list]
+                        metadatas = [json.dumps(data["payload"]["metadata"]) for data in test_data_list]
+                        
+                        cur.execute("""
+                            SELECT bulk_insert_vectors_optimized(%s::BIGINT[], %s::VECTOR[], %s::TEXT[], %s::JSONB[]);
+                        """, (vector_ids, embeddings, text_contents, metadatas))
+                        conn.commit()
+                    except Exception:
+                        # Fallback to manual batch insert
+                        conn.rollback()
+                        values = []
+                        for data in test_data_list:
+                            values.append(cur.mogrify("(%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)", (
+                                data["id"], data["vector"],
+                                data["payload"]["text_content"],
+                                json.dumps(data["payload"]["metadata"])
+                            )).decode('utf-8'))
 
-                    cur.execute(f"""
-                        INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
-                        VALUES {', '.join(values)};
-                    """)
-                    conn.commit()
+                        cur.execute(f"""
+                            INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata, created_at)
+                            VALUES {', '.join(values)};
+                        """)
+                        conn.commit()
             finally:
                 conn.close()
 
@@ -819,32 +1039,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             finally:
                 conn.close()
 
-        def get_collection_stats():
-            """Get TimescaleDB collection statistics"""
-            conn = psycopg2.connect(**self.postgres_ts_config)
-            try:
-                with conn.cursor() as cur:
-                    # Use the custom stats function from our populate script
-                    cur.execute("SELECT * FROM get_timescale_collection_stats();")
-                    stats = cur.fetchone()
-                    if stats:
-                        print(f"📊 TimescaleDB Collection Stats:")
-                        print(f"   Total points: {stats[0]:,}")
-                        print(f"   Vector dimensions: {stats[1]}")
-                        print(f"   Avg metadata size: {stats[2]:.2f} bytes")
-                        print(f"   Created at range: {stats[3]}")
-                        print(f"   Hypertable size: {stats[4]}")
-                        print(f"   Total chunks: {stats[5]}")
-                        print(f"   Compressed chunks: {stats[6]}")
-                    return stats
-            except Exception as e:
-                print(f"⚠️  Could not retrieve TimescaleDB stats: {e}")
-                return None
-            finally:
-                conn.close()
-
-        # Get collection statistics
-        get_collection_stats()
+        # Note: Collection statistics are now displayed in the main benchmark workflow
 
         return {
             "single_search": single_search,
@@ -1330,6 +1525,11 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
         print(f"Available Memory: {system_info['memory_available'] / (1024**3):.2f} GB")
         print(f"Disk Usage: {system_info['disk_usage']:.1f}%")
         
+        # Get and display database record counts
+        print(f"\nChecking database record counts...")
+        record_counts = self.get_database_record_counts(read_collection, "TestVectors")
+        self.display_database_record_counts(record_counts)
+        
         results = {
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
@@ -1337,7 +1537,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                 "load_duration": load_duration,
                 "vector_dimension": self.vector_dim,
                 "system_info": system_info,
-                "databases_tested": ["Weaviate", "Qdrant", "Milvus", "TimescaleDB", "PostgreSQL"]
+                "databases_tested": ["Weaviate", "Qdrant", "Milvus", "TimescaleDB", "PostgreSQL"],
+                "record_counts": record_counts
             },
             "weaviate_benchmark": None,
             "qdrant_benchmark": None,
@@ -1594,7 +1795,11 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             # Show performance ratios
             if len(search_data) >= 2:
                 fastest = search_data[0]
-                print(f"  🏆 {fastest['name']} is {fastest['qps']/search_data[-1]['qps']:.1f}x faster than {search_data[-1]['name']}")
+                slowest = search_data[-1]
+                if slowest['qps'] > 0:
+                    print(f"  🏆 {fastest['name']} is {fastest['qps']/slowest['qps']:.1f}x faster than {slowest['name']}")
+                else:
+                    print(f"  🏆 {fastest['name']} is {fastest['qps']:.1f}x faster (slowest has 0 QPS)")
         
         # Additional Qdrant-specific features
         if qdrant_benchmark:
@@ -2045,6 +2250,8 @@ USAGE EXAMPLES:
   Run only specific database:
     python benchmark.py --qdrant --iterations 100
     python benchmark.py --postgres --iterations 100
+    python benchmark.py --postgres-ts --iterations 100
+    python benchmark.py --postgres-only --iterations 100
     python benchmark.py --milvus --iterations 100
     python benchmark.py --weaviate --iterations 100
 
@@ -2090,6 +2297,7 @@ USAGE EXAMPLES:
     parser.add_argument("--qdrant", action="store_true", help="Run Qdrant benchmark only")
     parser.add_argument("--postgres", action="store_true", help="Run PostgreSQL benchmark only")
     parser.add_argument("--postgres-ts", action="store_true", help="Run TimescaleDB benchmark only")
+    parser.add_argument("--postgres-only", action="store_true", help="Run PostgreSQL and TimescaleDB benchmarks only")
     parser.add_argument("--comparison", action="store_true", help="Run database comparison only")
     parser.add_argument("--load-test", action="store_true", help="Run load test only")
     parser.add_argument("--milvus", action="store_true", help="Run Milvus benchmark only")
@@ -2102,7 +2310,7 @@ USAGE EXAMPLES:
     args = parser.parse_args()
     
     # Determine which tests to run
-    if args.all or not any([args.read, args.write, args.qdrant, args.postgres, args.postgres_ts, args.comparison, args.load_test, args.milvus, args.weaviate, args.all_databases]):
+    if args.all or not any([args.read, args.write, args.qdrant, args.postgres, args.postgres_ts, args.postgres_only, args.comparison, args.load_test, args.milvus, args.weaviate, args.all_databases]):
         # If no specific tests are selected, run all
         run_read = run_write = run_postgres = run_postgres_ts = run_comparison = run_load_test = True
         run_milvus = run_weaviate = True  # Include Milvus and Weaviate in --all
@@ -2114,6 +2322,11 @@ USAGE EXAMPLES:
         # Run only Qdrant benchmark
         run_read = run_write = True  # Qdrant uses the unified read/write benchmark
         run_postgres = run_postgres_ts = run_comparison = run_load_test = False
+        run_milvus = run_weaviate = False
+    elif args.postgres_only:
+        # Run only PostgreSQL and TimescaleDB benchmarks
+        run_read = run_write = False  # Disable Qdrant (uses unified read/write)
+        run_postgres = run_postgres_ts = run_comparison = run_load_test = True
         run_milvus = run_weaviate = False
     else:
         run_read = args.read

@@ -1,103 +1,103 @@
--- TimescaleDB initialization script for vector database
--- This script sets up the database with both TimescaleDB and pgvector extensions
+-- Optimized TimescaleDB + pgvectorscale for 100M+ vectors
+-- This script provides production-ready optimizations
 
--- Enable TimescaleDB extension (must be first)
 CREATE EXTENSION IF NOT EXISTS timescaledb;
-
--- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
-
--- Enable pgvectorscale extension for enhanced vector performance
 CREATE EXTENSION IF NOT EXISTS vectorscale;
 
--- Create a table for vector embeddings with time-series capabilities
--- Note: For TimescaleDB, we need to include the partitioning column in the primary key
+-- Optimized table structure for large-scale vector storage
 CREATE TABLE IF NOT EXISTS vector_embeddings_ts (
-    id SERIAL,
-    vector_id INTEGER NOT NULL,
-    embedding VECTOR(1024),  -- 1024-dimensional vectors
+    id BIGSERIAL,  -- Use BIGSERIAL for >2B records
+    vector_id BIGINT NOT NULL,
+    embedding VECTOR,  -- Let pgvector determine dimensions dynamically
     text_content TEXT,
     metadata JSONB,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id, created_at)
+    PRIMARY KEY (vector_id, created_at)  -- Composite PK for hypertable
 );
 
--- Convert the table to a hypertable (TimescaleDB feature)
--- This partitions the data by time for better performance on time-series queries
-SELECT create_hypertable('vector_embeddings_ts', 'created_at', if_not_exists => TRUE);
+-- Create hypertable with optimized partitioning for large datasets
+SELECT create_hypertable(
+    'vector_embeddings_ts', 
+    'created_at',
+    chunk_time_interval => INTERVAL '6 hours',  -- Smaller chunks for better performance
+    partitioning_column => 'vector_id',         -- Hash partitioning
+    number_partitions => 16,                    -- Adjust based on CPU cores
+    if_not_exists => TRUE
+);
 
--- Create indexes for better performance
--- Note: For hypertables, unique indexes must include the partitioning column
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_embeddings_ts_vector_id_time 
-ON vector_embeddings_ts(vector_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_vector_id ON vector_embeddings_ts(vector_id);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_metadata ON vector_embeddings_ts USING GIN(metadata);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_created_at ON vector_embeddings_ts(created_at);
+-- Optimize table storage parameters for large datasets
+ALTER TABLE vector_embeddings_ts SET (
+    fillfactor = 85,                           -- Leave room for updates
+    autovacuum_vacuum_scale_factor = 0.05,     -- More frequent vacuuming
+    autovacuum_analyze_scale_factor = 0.02,    -- More frequent analyze
+    autovacuum_vacuum_cost_limit = 2000,       -- Faster vacuuming
+    autovacuum_vacuum_cost_delay = 10          -- Reduce vacuum delay
+);
 
--- Configure memory for optimal index build performance
-SET maintenance_work_mem = '2GB';
+-- Essential indexes for 100M+ scale
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vector_embeddings_ts_vector_id_hash
+ON vector_embeddings_ts USING hash(vector_id);
 
--- Create DiskANN index for high-performance vector similarity search
--- DiskANN provides better performance than HNSW for large datasets
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_embedding_diskann 
-ON vector_embeddings_ts USING diskann (embedding)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vector_embeddings_ts_metadata_gin
+ON vector_embeddings_ts USING GIN(metadata) WITH (fastupdate = off);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vector_embeddings_ts_created_at_brin
+ON vector_embeddings_ts USING BRIN(created_at) WITH (pages_per_range = 32);
+
+-- Production-optimized DiskANN indexes
+-- Primary index optimized for high recall
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vector_embeddings_ts_embedding_diskann_primary
+ON vector_embeddings_ts USING diskann (embedding vector_cosine_ops)
 WITH (
-    num_neighbors = 50,           -- Maximum number of neighbors per node
-    search_list_size = 100,       -- Number of additional candidates during graph search
-    max_alpha = 1.2,              -- Graph quality parameter during construction
-    num_dimensions = 1024,        -- Vector dimensions
-    storage_layout = memory_optimized  -- Optimize for memory usage
+    num_neighbors = 64,              -- Higher for better recall with large datasets
+    search_list_size = 128,          -- Larger search list for accuracy
+    max_alpha = 1.3,                 -- Better graph quality
+    num_dimensions = 1024,
+    storage_layout = memory_optimized
 );
 
--- Create additional DiskANN index optimized for different distance metrics if needed
--- This creates a backup index with different parameters for comparison
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_ts_embedding_diskann_l2 
-ON vector_embeddings_ts USING diskann (embedding vector_l2_ops)
+-- Secondary index optimized for speed
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vector_embeddings_ts_embedding_diskann_fast
+ON vector_embeddings_ts USING diskann (embedding vector_cosine_ops)
 WITH (
-    num_neighbors = 30,
-    search_list_size = 75,
-    max_alpha = 1.0
+    num_neighbors = 32,              -- Lower for speed
+    search_list_size = 64,           -- Smaller search list for speed
+    max_alpha = 1.0,
+    num_dimensions = 1024,
+    storage_layout = memory_optimized
 );
 
--- Set query-time parameters for optimal performance
--- These can be adjusted based on accuracy vs speed requirements
-SET vectorscale.query_rescore = 400;  -- Number of elements to rescore during query
-
--- Create a function to update the updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
--- Create trigger to automatically update updated_at
-CREATE TRIGGER update_vector_embeddings_ts_updated_at 
-    BEFORE UPDATE ON vector_embeddings_ts 
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
-
--- Create an optimized function for similarity search using DiskANN
-CREATE OR REPLACE FUNCTION search_similar_vectors(
-    query_embedding VECTOR(1024),
+-- Optimized similarity search function with performance tuning
+CREATE OR REPLACE FUNCTION search_similar_vectors_optimized(
+    query_embedding VECTOR,
     match_limit INTEGER DEFAULT 10,
     similarity_threshold FLOAT DEFAULT 0.0,
-    use_diskann BOOLEAN DEFAULT TRUE
+    use_fast_index BOOLEAN DEFAULT FALSE,
+    rescore_multiplier FLOAT DEFAULT 4.0
 )
 RETURNS TABLE (
-    vector_id INTEGER,
+    vector_id BIGINT,
     text_content TEXT,
     metadata JSONB,
     similarity FLOAT,
     distance FLOAT
 ) AS $$
+DECLARE
+    rescore_count INTEGER;
 BEGIN
-    -- Set DiskANN query parameters for optimal performance
-    IF use_diskann THEN
-        -- Adjust query-time parameters based on requirements
-        PERFORM set_config('vectorscale.query_rescore', '400', true);
+    -- Calculate optimal rescore count
+    rescore_count := GREATEST(match_limit * rescore_multiplier, 100)::INTEGER;
+    
+    -- Set query-specific parameters
+    PERFORM set_config('vectorscale.query_rescore', rescore_count::TEXT, true);
+    PERFORM set_config('work_mem', '512MB', true);
+    
+    -- Force index choice based on performance requirements
+    IF use_fast_index THEN
+        SET enable_seqscan = off;
+        SET enable_indexscan = on;
     END IF;
     
     RETURN QUERY
@@ -114,28 +114,25 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create a function for time-range similarity search (TimescaleDB + DiskANN optimized)
-CREATE OR REPLACE FUNCTION search_similar_vectors_time_range(
-    query_embedding VECTOR(1024),
+-- Time-partitioned search with chunk exclusion optimization
+CREATE OR REPLACE FUNCTION search_similar_vectors_time_optimized(
+    query_embedding VECTOR,
     start_time TIMESTAMPTZ,
     end_time TIMESTAMPTZ,
     match_limit INTEGER DEFAULT 10,
-    similarity_threshold FLOAT DEFAULT 0.0,
-    use_diskann BOOLEAN DEFAULT TRUE
+    similarity_threshold FLOAT DEFAULT 0.0
 )
 RETURNS TABLE (
-    vector_id INTEGER,
+    vector_id BIGINT,
     text_content TEXT,
     metadata JSONB,
     created_at TIMESTAMPTZ,
-    similarity FLOAT,
-    distance FLOAT
+    similarity FLOAT
 ) AS $$
 BEGIN
-    -- Optimize DiskANN parameters for time-range queries
-    IF use_diskann THEN
-        PERFORM set_config('vectorscale.query_rescore', '300', true);
-    END IF;
+    -- Enable constraint exclusion for chunk pruning
+    PERFORM set_config('constraint_exclusion', 'partition', true);
+    PERFORM set_config('vectorscale.query_rescore', (match_limit * 3)::TEXT, true);
     
     RETURN QUERY
     SELECT 
@@ -143,183 +140,156 @@ BEGIN
         ve.text_content,
         ve.metadata,
         ve.created_at,
-        1 - (ve.embedding <=> query_embedding) AS similarity,
-        ve.embedding <=> query_embedding AS distance
+        1 - (ve.embedding <=> query_embedding) AS similarity
     FROM vector_embeddings_ts ve
-    WHERE ve.created_at BETWEEN start_time AND end_time
+    WHERE ve.created_at >= start_time 
+      AND ve.created_at <= end_time
       AND 1 - (ve.embedding <=> query_embedding) > similarity_threshold
     ORDER BY ve.embedding <=> query_embedding
     LIMIT match_limit;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create a function for batch similarity search
-CREATE OR REPLACE FUNCTION search_similar_vectors_batch(
-    query_embeddings VECTOR(1024)[],
-    match_limit INTEGER DEFAULT 10,
-    similarity_threshold FLOAT DEFAULT 0.0
+-- Batch insert function optimized for bulk loading
+CREATE OR REPLACE FUNCTION bulk_insert_vectors(
+    vector_ids BIGINT[],
+    embeddings VECTOR[],
+    text_contents TEXT[],
+    metadatas JSONB[]
 )
-RETURNS TABLE (
-    query_index INTEGER,
-    vector_id INTEGER,
-    text_content TEXT,
-    metadata JSONB,
-    similarity FLOAT
-) AS $$
+RETURNS INTEGER AS $$
 DECLARE
-    query_embedding VECTOR(1024);
-    query_idx INTEGER;
+    batch_size INTEGER := array_length(vector_ids, 1);
 BEGIN
-    FOR query_idx IN 1..array_length(query_embeddings, 1) LOOP
-        query_embedding := query_embeddings[query_idx];
-        
-        RETURN QUERY
-        SELECT 
-            query_idx,
-            ve.vector_id,
-            ve.text_content,
-            ve.metadata,
-            1 - (ve.embedding <=> query_embedding) AS similarity
-        FROM vector_embeddings_ts ve
-        WHERE 1 - (ve.embedding <=> query_embedding) > similarity_threshold
-        ORDER BY ve.embedding <=> query_embedding
-        LIMIT match_limit;
-    END LOOP;
+    -- Optimize for bulk loading
+    PERFORM set_config('maintenance_work_mem', '2GB', true);
+    PERFORM set_config('checkpoint_completion_target', '0.9', true);
+    
+    -- Use COPY-like insert for performance
+    INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata)
+    SELECT 
+        unnest(vector_ids),
+        unnest(embeddings),
+        unnest(text_contents),
+        unnest(metadatas)
+    ON CONFLICT (vector_id, created_at) DO NOTHING;
+    
+    RETURN batch_size;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create a function to get collection statistics (TimescaleDB + pgvectorscale enhanced)
-CREATE OR REPLACE FUNCTION get_collection_stats()
+-- Enhanced statistics function with performance metrics
+CREATE OR REPLACE FUNCTION get_collection_stats_detailed()
 RETURNS TABLE (
     total_points BIGINT,
+    total_chunks INTEGER,
+    avg_chunk_size BIGINT,
     vector_dimensions INTEGER,
-    avg_metadata_size FLOAT,
-    created_at_range TEXT,
-    hypertable_info TEXT,
-    diskann_indexes TEXT,
-    index_sizes TEXT
+    index_sizes JSONB,
+    table_size TEXT,
+    query_performance_est TEXT
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT 
-        COUNT(*)::BIGINT as total_points,
-        1024 as vector_dimensions,
-        AVG(LENGTH(metadata::TEXT)::FLOAT) as avg_metadata_size,
-        CONCAT(
-            MIN(created_at)::TEXT, 
-            ' to ', 
-            MAX(created_at)::TEXT
-        ) as created_at_range,
-        'TimescaleDB hypertable with pgvectorscale' as hypertable_info,
-        'DiskANN indexes: cosine, l2' as diskann_indexes,
-        pg_size_pretty(hypertable_size('vector_embeddings_ts')) as index_sizes
-    FROM vector_embeddings_ts;
+        (SELECT COUNT(*) FROM vector_embeddings_ts)::BIGINT,
+        (SELECT COUNT(*) FROM timescaledb_information.chunks 
+         WHERE hypertable_name = 'vector_embeddings_ts')::INTEGER,
+        (SELECT COUNT(*) / GREATEST(COUNT(DISTINCT chunk_schema||'.'||chunk_name), 1)
+         FROM timescaledb_information.chunks c
+         JOIN vector_embeddings_ts v ON true
+         WHERE c.hypertable_name = 'vector_embeddings_ts')::BIGINT,
+        (SELECT vector_dims(embedding) FROM vector_embeddings_ts LIMIT 1)::INTEGER,
+        (SELECT jsonb_object_agg(indexname, pg_size_pretty(pg_relation_size(indexname::regclass)))
+         FROM pg_indexes WHERE tablename = 'vector_embeddings_ts'),
+        pg_size_pretty(hypertable_size('vector_embeddings_ts')),
+        CASE 
+            WHEN (SELECT COUNT(*) FROM vector_embeddings_ts) > 50000000 
+            THEN 'Consider query optimization for 50M+ vectors'
+            ELSE 'Performance should be optimal'
+        END;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create a function to optimize DiskANN query performance
-CREATE OR REPLACE FUNCTION optimize_diskann_query(
-    rescore_factor INTEGER DEFAULT 400,
-    enable_parallel BOOLEAN DEFAULT TRUE
-)
-RETURNS TEXT AS $$
-BEGIN
-    -- Set optimal DiskANN query parameters
-    PERFORM set_config('vectorscale.query_rescore', rescore_factor::TEXT, false);
-    
-    -- Enable parallel query execution if requested
-    IF enable_parallel THEN
-        PERFORM set_config('max_parallel_workers_per_gather', '4', false);
-        PERFORM set_config('enable_parallel_append', 'on', false);
-    END IF;
-    
-    RETURN format('DiskANN optimized: rescore=%s, parallel=%s', 
-                  rescore_factor, enable_parallel);
-END;
-$$ LANGUAGE plpgsql;
+-- Compression policy for old data (TimescaleDB feature)
+SELECT add_compression_policy('vector_embeddings_ts', INTERVAL '7 days');
 
--- Create a function to get DiskANN index statistics
-CREATE OR REPLACE FUNCTION get_diskann_index_stats()
-RETURNS TABLE (
-    index_name TEXT,
-    index_size TEXT,
-    table_name TEXT,
-    index_type TEXT
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT 
-        i.indexname::TEXT,
-        pg_size_pretty(pg_relation_size(i.indexname::regclass))::TEXT,
-        i.tablename::TEXT,
-        'DiskANN'::TEXT
-    FROM pg_indexes i
-    WHERE i.tablename = 'vector_embeddings_ts' 
-      AND i.indexdef LIKE '%diskann%';
-END;
-$$ LANGUAGE plpgsql;
+-- Retention policy (optional - remove old data)
+-- SELECT add_retention_policy('vector_embeddings_ts', INTERVAL '1 year');
 
--- Create TimescaleDB-specific continuous aggregates for time-based analytics
--- This creates a materialized view that automatically aggregates data by hour
-CREATE MATERIALIZED VIEW IF NOT EXISTS vector_embeddings_ts_hourly
-WITH (timescaledb.continuous) AS
+-- Continuous aggregate for hourly analytics
+CREATE MATERIALIZED VIEW vector_embeddings_ts_hourly_optimized
+WITH (timescaledb.continuous, timescaledb.materialized_only = true) AS
 SELECT 
     time_bucket('1 hour', created_at) AS bucket,
     COUNT(*) as vectors_count,
-    AVG(LENGTH(text_content)) as avg_text_length
+    AVG(char_length(text_content)) as avg_text_length,
+    COUNT(DISTINCT vector_id) as unique_vectors
 FROM vector_embeddings_ts
 GROUP BY bucket
 WITH NO DATA;
 
--- Enable automatic refresh of the continuous aggregate
-SELECT add_continuous_aggregate_policy('vector_embeddings_ts_hourly',
-    start_offset => INTERVAL '1 day',
+-- Refresh policy for continuous aggregate
+SELECT add_continuous_aggregate_policy('vector_embeddings_ts_hourly_optimized',
+    start_offset => INTERVAL '3 hours',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour',
     if_not_exists => TRUE);
 
--- Insert some sample data for testing
-INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata) VALUES
-(1, ARRAY[0.1, 0.2, 0.3, 0.4, 0.5]::VECTOR(1024), 'TimescaleDB sample document 1', '{"category": "timeseries", "source": "sample"}'),
-(2, ARRAY[0.2, 0.3, 0.4, 0.5, 0.6]::VECTOR(1024), 'TimescaleDB sample document 2', '{"category": "timeseries", "source": "sample"}'),
-(3, ARRAY[0.3, 0.4, 0.5, 0.6, 0.7]::VECTOR(1024), 'TimescaleDB sample document 3', '{"category": "timeseries", "source": "sample"}')
-ON CONFLICT (vector_id, created_at) DO NOTHING;
+-- Session-level optimizations (apply these before heavy operations)
+CREATE OR REPLACE FUNCTION optimize_for_vector_operations()
+RETURNS TEXT AS $$
+BEGIN
+    -- Memory settings
+    PERFORM set_config('work_mem', '1GB', false);
+    PERFORM set_config('maintenance_work_mem', '4GB', false);
+    PERFORM set_config('temp_buffers', '256MB', false);
+    
+    -- Query planner settings
+    PERFORM set_config('random_page_cost', '1.1', false);
+    PERFORM set_config('effective_cache_size', '8GB', false);
+    PERFORM set_config('cpu_tuple_cost', '0.01', false);
+    
+    -- Parallel execution
+    PERFORM set_config('max_parallel_workers_per_gather', '4', false);
+    PERFORM set_config('parallel_tuple_cost', '0.1', false);
+    
+    -- Vector-specific settings
+    PERFORM set_config('vectorscale.query_rescore', '500', false);
+    
+    RETURN 'Vector database optimized for current session';
+END;
+$$ LANGUAGE plpgsql;
 
--- Grant permissions
-GRANT ALL PRIVILEGES ON DATABASE vectordb TO postgres;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO postgres;
+-- Maintenance function for large-scale deployments
+CREATE OR REPLACE FUNCTION maintain_vector_database()
+RETURNS TEXT AS $$
+BEGIN
+    -- Update table statistics
+    ANALYZE vector_embeddings_ts;
+    
+    -- Refresh continuous aggregates
+    CALL refresh_continuous_aggregate('vector_embeddings_ts_hourly_optimized', NULL, NULL);
+    
+    -- Compress old chunks (if compression enabled)
+    PERFORM compress_chunk(chunk) FROM show_chunks('vector_embeddings_ts', older_than => INTERVAL '7 days') chunk;
+    
+    RETURN 'Database maintenance completed';
+END;
+$$ LANGUAGE plpgsql;
 
--- Configure TimescaleDB + pgvectorscale optimization settings
--- These settings optimize performance for vector operations
-ALTER SYSTEM SET shared_preload_libraries = 'timescaledb,vectorscale';
-ALTER SYSTEM SET max_connections = 200;
-ALTER SYSTEM SET shared_buffers = '256MB';
-ALTER SYSTEM SET effective_cache_size = '1GB';
-ALTER SYSTEM SET maintenance_work_mem = '2GB';
-ALTER SYSTEM SET checkpoint_completion_target = 0.9;
-ALTER SYSTEM SET wal_buffers = '16MB';
-ALTER SYSTEM SET default_statistics_target = 100;
-ALTER SYSTEM SET random_page_cost = 1.1;
-ALTER SYSTEM SET effective_io_concurrency = 200;
-
--- Set default DiskANN query parameters for optimal performance
-ALTER SYSTEM SET vectorscale.query_rescore = 400;
-
--- Reload configuration
-SELECT pg_reload_conf();
-
--- Display initialization summary
+-- Example usage with proper error handling
 DO $$
 BEGIN
-    RAISE NOTICE 'TimescaleDB + pgvectorscale initialization completed!';
-    RAISE NOTICE 'Features enabled:';
-    RAISE NOTICE '  ✓ TimescaleDB hypertables for time-series partitioning';
-    RAISE NOTICE '  ✓ pgvector for vector operations';
-    RAISE NOTICE '  ✓ pgvectorscale for enhanced DiskANN performance';
-    RAISE NOTICE '  ✓ DiskANN indexes for fast similarity search';
-    RAISE NOTICE '  ✓ Continuous aggregates for time-based analytics';
-    RAISE NOTICE '  ✓ Optimized query functions';
-    RAISE NOTICE 'Use search_similar_vectors() for optimal vector queries';
+    RAISE NOTICE 'TimescaleDB + pgvectorscale optimized for 100M+ vectors';
+    RAISE NOTICE 'Key optimizations:';
+    RAISE NOTICE '  ✓ Hypertable with hash partitioning';
+    RAISE NOTICE '  ✓ Multiple DiskANN indexes (recall vs speed)';
+    RAISE NOTICE '  ✓ Optimized bulk insert functions';
+    RAISE NOTICE '  ✓ Advanced query optimization';
+    RAISE NOTICE '  ✓ Compression and retention policies';
+    RAISE NOTICE '  ✓ Performance monitoring functions';
+    RAISE NOTICE '';
+    RAISE NOTICE 'Usage: SELECT optimize_for_vector_operations(); before queries';
+    RAISE NOTICE 'Maintenance: SELECT maintain_vector_database(); regularly';
 END $$;

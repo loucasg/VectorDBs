@@ -24,11 +24,11 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-      - ./init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql
+    - ./data/postgres/data:/var/lib/postgresql/data
+    - ./init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vectordb"]  # Add -d vectordb
       interval: 10s
       timeout: 5s
       retries: 5
@@ -46,11 +46,11 @@ services:
      - TIMESCALEDB_TELEMETRY=off
      - PGDATA=/home/postgres/pgdata/data      
     volumes:
-      - ./data/timescaledb:/home/postgres/pgdata/data
-      - ./init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql
+    - ./data/timescaledb/data:/home/postgres/pgdata/data
+    - ./init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vectordb"]
       interval: 10s
       timeout: 5s
       retries: 5

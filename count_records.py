@@ -11,6 +11,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import requests
 import json
+import signal
+import time
+from contextlib import contextmanager
 
 # Optional imports for new databases
 try:
@@ -26,6 +29,24 @@ except ImportError:
     WEAVIATE_AVAILABLE = False
 
 
+@contextmanager
+def timeout_handler(seconds):
+    """Context manager for handling timeouts"""
+    def timeout_signal_handler(signum, frame):
+        raise TimeoutError(f"Operation timed out after {seconds} seconds")
+    
+    # Set the signal handler
+    old_handler = signal.signal(signal.SIGALRM, timeout_signal_handler)
+    signal.alarm(seconds)
+    
+    try:
+        yield
+    finally:
+        # Restore the old signal handler
+        signal.signal(signal.SIGALRM, old_handler)
+        signal.alarm(0)
+
+
 class RecordCounter:
     def __init__(self, qdrant_host="localhost", qdrant_port=6333, 
                  postgres_host="localhost", postgres_port=5432,
@@ -35,21 +56,30 @@ class RecordCounter:
                  postgres_ts_user="postgres", postgres_ts_password="postgres",
                  postgres_ts_db="vectordb",
                  milvus_host="localhost", milvus_port="19530",
-                 weaviate_host="localhost", weaviate_port="8080"):
-        self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port)
+                 weaviate_host="localhost", weaviate_port="8080",
+                 timeout_seconds=30):
+        # Initialize with timeout configurations
+        self.timeout_seconds = timeout_seconds
+        self.qdrant_client = QdrantClient(
+            host=qdrant_host, 
+            port=qdrant_port,
+            timeout=timeout_seconds
+        )
         self.postgres_config = {
             "host": postgres_host,
             "port": postgres_port,
             "user": postgres_user,
             "password": postgres_password,
-            "database": postgres_db
+            "database": postgres_db,
+            "connect_timeout": timeout_seconds
         }
         self.postgres_ts_config = {
             "host": postgres_ts_host,
             "port": postgres_ts_port,
             "user": postgres_ts_user,
             "password": postgres_ts_password,
-            "database": postgres_ts_db
+            "database": postgres_ts_db,
+            "connect_timeout": timeout_seconds
         }
         self.milvus_host = milvus_host
         self.milvus_port = milvus_port
@@ -57,16 +87,23 @@ class RecordCounter:
         self.weaviate_port = weaviate_port
     
     def count_qdrant_records(self, collection_name="test_vectors"):
-        """Count records in Qdrant collection"""
+        """Count records in Qdrant collection with timeout"""
         try:
-            collection_info = self.qdrant_client.get_collection(collection_name)
+            with timeout_handler(self.timeout_seconds):
+                collection_info = self.qdrant_client.get_collection(collection_name)
+                return {
+                    "success": True,
+                    "count": collection_info.points_count,
+                    "collection_name": collection_name,
+                    "vector_dim": collection_info.config.params.vectors.size,
+                    "distance_metric": collection_info.config.params.vectors.distance,
+                    "indexed_vectors": collection_info.indexed_vectors_count
+                }
+        except TimeoutError as e:
             return {
-                "success": True,
-                "count": collection_info.points_count,
-                "collection_name": collection_name,
-                "vector_dim": collection_info.config.params.vectors.size,
-                "distance_metric": collection_info.config.params.vectors.distance,
-                "indexed_vectors": collection_info.indexed_vectors_count
+                "success": False,
+                "error": f"Timeout: {str(e)}",
+                "collection_name": collection_name
             }
         except Exception as e:
             return {
@@ -76,73 +113,79 @@ class RecordCounter:
             }
     
     def count_postgres_records(self):
-        """Count records in PostgreSQL table"""
+        """Count records in PostgreSQL table with timeout"""
         conn = None
         try:
-            conn = psycopg2.connect(**self.postgres_config)
-            conn.autocommit = True  # Enable autocommit to avoid transaction issues
-            
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Count total records
-                cur.execute("SELECT COUNT(*) as total_count FROM vector_embeddings;")
-                total_count = cur.fetchone()['total_count']
+            with timeout_handler(self.timeout_seconds):
+                conn = psycopg2.connect(**self.postgres_config)
+                conn.autocommit = True  # Enable autocommit to avoid transaction issues
                 
-                # Get vector dimension - try different approaches
-                vector_dim = 0
-                
-                # Try to get dimension from pgvector directly (most reliable)
-                try:
-                    cur.execute("""
-                        SELECT vector_dims(embedding) as vector_dim
-                        FROM vector_embeddings 
-                        LIMIT 1;
-                    """)
-                    dim_result = cur.fetchone()
-                    if dim_result and dim_result['vector_dim']:
-                        vector_dim = dim_result['vector_dim']
-                except Exception as e:
-                    print(f"Warning: Could not get vector dimension using vector_dims: {e}")
-                
-                if vector_dim == 0:
-                    # Fallback: try to get dimension from column definition
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Count total records
+                    cur.execute("SELECT COUNT(*) as total_count FROM vector_embeddings;")
+                    total_count = cur.fetchone()['total_count']
+                    
+                    # Get vector dimension - try different approaches
+                    vector_dim = 0
+                    
+                    # Try to get dimension from pgvector directly (most reliable)
                     try:
                         cur.execute("""
-                            SELECT character_maximum_length 
-                            FROM information_schema.columns 
-                            WHERE table_name = 'vector_embeddings' 
-                            AND column_name = 'embedding';
+                            SELECT vector_dims(embedding) as vector_dim
+                            FROM vector_embeddings 
+                            LIMIT 1;
                         """)
                         dim_result = cur.fetchone()
-                        if dim_result and dim_result['character_maximum_length']:
-                            vector_dim = dim_result['character_maximum_length']
+                        if dim_result and dim_result['vector_dim']:
+                            vector_dim = dim_result['vector_dim']
                     except Exception as e:
-                        print(f"Warning: Could not get vector dimension from column definition: {e}")
-                
-                # Get table size info
-                try:
-                    cur.execute("""
-                        SELECT 
-                            pg_size_pretty(pg_total_relation_size('vector_embeddings')) as table_size,
-                            pg_size_pretty(pg_relation_size('vector_embeddings')) as data_size,
-                            pg_size_pretty(pg_total_relation_size('vector_embeddings') - pg_relation_size('vector_embeddings')) as index_size
-                    """)
-                    size_info = cur.fetchone()
-                except Exception as e:
-                    print(f"Warning: Could not get table size info: {e}")
-                    size_info = {
-                        'table_size': 'Unknown',
-                        'data_size': 'Unknown', 
-                        'index_size': 'Unknown'
+                        print(f"Warning: Could not get vector dimension using vector_dims: {e}")
+                    
+                    if vector_dim == 0:
+                        # Fallback: try to get dimension from column definition
+                        try:
+                            cur.execute("""
+                                SELECT character_maximum_length 
+                                FROM information_schema.columns 
+                                WHERE table_name = 'vector_embeddings' 
+                                AND column_name = 'embedding';
+                            """)
+                            dim_result = cur.fetchone()
+                            if dim_result and dim_result['character_maximum_length']:
+                                vector_dim = dim_result['character_maximum_length']
+                        except Exception as e:
+                            print(f"Warning: Could not get vector dimension from column definition: {e}")
+                    
+                    # Get table size info
+                    try:
+                        cur.execute("""
+                            SELECT 
+                                pg_size_pretty(pg_total_relation_size('vector_embeddings')) as table_size,
+                                pg_size_pretty(pg_relation_size('vector_embeddings')) as data_size,
+                                pg_size_pretty(pg_total_relation_size('vector_embeddings') - pg_relation_size('vector_embeddings')) as index_size
+                        """)
+                        size_info = cur.fetchone()
+                    except Exception as e:
+                        print(f"Warning: Could not get table size info: {e}")
+                        size_info = {
+                            'table_size': 'Unknown',
+                            'data_size': 'Unknown', 
+                            'index_size': 'Unknown'
+                        }
+                    
+                    return {
+                        "success": True,
+                        "count": total_count,
+                        "vector_dim": vector_dim,
+                        "table_size": size_info['table_size'],
+                        "data_size": size_info['data_size'],
+                        "index_size": size_info['index_size']
                     }
-                
-                return {
-                    "success": True,
-                    "count": total_count,
-                    "vector_dim": vector_dim,
-                    "table_size": size_info['table_size'],
-                    "data_size": size_info['data_size'],
-                    "index_size": size_info['index_size']
-                }
+        except TimeoutError as e:
+            return {
+                "success": False,
+                "error": f"Timeout: {str(e)}"
+            }
         except Exception as e:
             return {
                 "success": False,
@@ -153,88 +196,94 @@ class RecordCounter:
                 conn.close()
     
     def count_postgres_ts_records(self):
-        """Count records in TimescaleDB table"""
+        """Count records in TimescaleDB table with timeout"""
         conn = None
         try:
-            conn = psycopg2.connect(**self.postgres_ts_config)
-            conn.autocommit = True  # Enable autocommit to avoid transaction issues
-            
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Count total records
-                cur.execute("SELECT COUNT(*) as total_count FROM vector_embeddings_ts;")
-                total_count = cur.fetchone()['total_count']
+            with timeout_handler(self.timeout_seconds):
+                conn = psycopg2.connect(**self.postgres_ts_config)
+                conn.autocommit = True  # Enable autocommit to avoid transaction issues
                 
-                # Get vector dimension - try different approaches
-                vector_dim = 0
-                
-                # Try to get dimension from pgvector directly (most reliable)
-                try:
-                    cur.execute("""
-                        SELECT vector_dims(embedding) as vector_dim
-                        FROM vector_embeddings_ts 
-                        LIMIT 1;
-                    """)
-                    dim_result = cur.fetchone()
-                    if dim_result and dim_result['vector_dim']:
-                        vector_dim = dim_result['vector_dim']
-                except Exception as e:
-                    print(f"Warning: Could not get vector dimension using vector_dims: {e}")
-                
-                if vector_dim == 0:
-                    # Fallback: try to get dimension from column definition
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Count total records
+                    cur.execute("SELECT COUNT(*) as total_count FROM vector_embeddings_ts;")
+                    total_count = cur.fetchone()['total_count']
+                    
+                    # Get vector dimension - try different approaches
+                    vector_dim = 0
+                    
+                    # Try to get dimension from pgvector directly (most reliable)
                     try:
                         cur.execute("""
-                            SELECT character_maximum_length 
-                            FROM information_schema.columns 
-                            WHERE table_name = 'vector_embeddings_ts' 
-                            AND column_name = 'embedding';
+                            SELECT vector_dims(embedding) as vector_dim
+                            FROM vector_embeddings_ts 
+                            LIMIT 1;
                         """)
                         dim_result = cur.fetchone()
-                        if dim_result and dim_result['character_maximum_length']:
-                            vector_dim = dim_result['character_maximum_length']
+                        if dim_result and dim_result['vector_dim']:
+                            vector_dim = dim_result['vector_dim']
                     except Exception as e:
-                        print(f"Warning: Could not get vector dimension from column definition: {e}")
-                
-                # Get table size info - use TimescaleDB-specific functions for hypertables
-                try:
-                    # First check if this is a hypertable
-                    cur.execute("""
-                        SELECT EXISTS (
-                            SELECT 1 FROM timescaledb_information.hypertables 
-                            WHERE hypertable_name = 'vector_embeddings_ts'
-                        ) as is_hypertable;
-                    """)
-                    is_hypertable = cur.fetchone()['is_hypertable']
+                        print(f"Warning: Could not get vector dimension using vector_dims: {e}")
                     
-                    if is_hypertable:
-                        # Use TimescaleDB hypertable size functions
+                    if vector_dim == 0:
+                        # Fallback: try to get dimension from column definition
+                        try:
+                            cur.execute("""
+                                SELECT character_maximum_length 
+                                FROM information_schema.columns 
+                                WHERE table_name = 'vector_embeddings_ts' 
+                                AND column_name = 'embedding';
+                            """)
+                            dim_result = cur.fetchone()
+                            if dim_result and dim_result['character_maximum_length']:
+                                vector_dim = dim_result['character_maximum_length']
+                        except Exception as e:
+                            print(f"Warning: Could not get vector dimension from column definition: {e}")
+                    
+                    # Get table size info - use TimescaleDB-specific functions for hypertables
+                    try:
+                        # First check if this is a hypertable
                         cur.execute("""
-                            SELECT 
-                                pg_size_pretty(hypertable_size('vector_embeddings_ts')) as table_size,
-                                pg_size_pretty(hypertable_size('vector_embeddings_ts')) as data_size,
-                                '0 bytes' as index_size
+                            SELECT EXISTS (
+                                SELECT 1 FROM timescaledb_information.hypertables 
+                                WHERE hypertable_name = 'vector_embeddings_ts'
+                            ) as is_hypertable;
                         """)
-                    else:
-                        # Use regular PostgreSQL size functions
-                        cur.execute("""
-                            SELECT 
-                                pg_size_pretty(pg_total_relation_size('vector_embeddings_ts')) as table_size,
-                                pg_size_pretty(pg_relation_size('vector_embeddings_ts')) as data_size,
-                                pg_size_pretty(pg_total_relation_size('vector_embeddings_ts') - pg_relation_size('vector_embeddings_ts')) as index_size
-                        """)
-                    size_info = cur.fetchone()
-                except Exception as e:
-                    print(f"Warning: Could not get table size info: {e}")
-                    size_info = {'table_size': 'N/A', 'data_size': 'N/A', 'index_size': 'N/A'}
-                
-                return {
-                    "success": True,
-                    "count": total_count,
-                    "vector_dim": vector_dim,
-                    "table_size": size_info['table_size'],
-                    "data_size": size_info['data_size'],
-                    "index_size": size_info['index_size']
-                }
+                        is_hypertable = cur.fetchone()['is_hypertable']
+                        
+                        if is_hypertable:
+                            # Use TimescaleDB hypertable size functions
+                            cur.execute("""
+                                SELECT 
+                                    pg_size_pretty(hypertable_size('vector_embeddings_ts')) as table_size,
+                                    pg_size_pretty(hypertable_size('vector_embeddings_ts')) as data_size,
+                                    '0 bytes' as index_size
+                            """)
+                        else:
+                            # Use regular PostgreSQL size functions
+                            cur.execute("""
+                                SELECT 
+                                    pg_size_pretty(pg_total_relation_size('vector_embeddings_ts')) as table_size,
+                                    pg_size_pretty(pg_relation_size('vector_embeddings_ts')) as data_size,
+                                    pg_size_pretty(pg_total_relation_size('vector_embeddings_ts') - pg_relation_size('vector_embeddings_ts')) as index_size
+                            """)
+                        size_info = cur.fetchone()
+                    except Exception as e:
+                        print(f"Warning: Could not get table size info: {e}")
+                        size_info = {'table_size': 'N/A', 'data_size': 'N/A', 'index_size': 'N/A'}
+                    
+                    return {
+                        "success": True,
+                        "count": total_count,
+                        "vector_dim": vector_dim,
+                        "table_size": size_info['table_size'],
+                        "data_size": size_info['data_size'],
+                        "index_size": size_info['index_size']
+                    }
+        except TimeoutError as e:
+            return {
+                "success": False,
+                "error": f"Timeout: {str(e)}"
+            }
         except Exception as e:
             return {
                 "success": False,
@@ -245,7 +294,7 @@ class RecordCounter:
                 conn.close()
     
     def count_milvus_records(self, collection_name="test_vectors"):
-        """Count records in Milvus collection"""
+        """Count records in Milvus collection - using same approach as benchmark.py"""
         if not MILVUS_AVAILABLE:
             return {
                 "success": False,
@@ -253,50 +302,17 @@ class RecordCounter:
             }
         
         try:
-            # Connect to Milvus
-            connection_alias = f"milvus_count_{collection_name}"
-            connections.connect(
-                alias=connection_alias,
-                host=self.milvus_host,
-                port=self.milvus_port
-            )
-            
-            # Check if collection exists
-            if not utility.has_collection(collection_name, using=connection_alias):
-                return {
-                    "success": False,
-                    "error": f"Collection '{collection_name}' does not exist"
-                }
-            
-            # Get collection info
-            collection = Collection(collection_name, using=connection_alias)
-            collection.load()
-            
-            # Get entity count
-            entity_count = collection.num_entities
-            
-            # Get schema info
-            schema = collection.schema
-            vector_dim = 0
-            for field in schema.fields:
-                if field.name == "vector":
-                    vector_dim = field.params.get("dim", 0)
-                    break
-            
-            # Get index info
-            index_info = collection.index().params
-            
-            connections.disconnect(connection_alias)
+            # Use the same simple approach as benchmark.py
+            connections.connect(alias="count_check", host=self.milvus_host, port=self.milvus_port)
+            collection = Collection(collection_name, using="count_check")
+            count = collection.num_entities
+            connections.disconnect("count_check")
             
             return {
                 "success": True,
-                "count": entity_count,
-                "collection_name": collection_name,
-                "vector_dim": vector_dim,
-                "index_type": index_info.get("index_type", "Unknown"),
-                "metric_type": index_info.get("metric_type", "Unknown")
+                "count": count,
+                "collection_name": collection_name
             }
-            
         except Exception as e:
             return {
                 "success": False,
@@ -305,7 +321,7 @@ class RecordCounter:
             }
     
     def count_weaviate_records(self, collection_name="TestVectors"):
-        """Count records in Weaviate collection"""
+        """Count records in Weaviate collection with timeout"""
         if not WEAVIATE_AVAILABLE:
             return {
                 "success": False,
@@ -313,43 +329,50 @@ class RecordCounter:
             }
         
         try:
-            # Connect to Weaviate using v4 API
-            client = weaviate.connect_to_local(
-                host=self.weaviate_host,
-                port=self.weaviate_port,
-                grpc_port=50051
-            )
-            
-            if not client.is_ready():
+            with timeout_handler(self.timeout_seconds):
+                # Connect to Weaviate using v4 API
+                client = weaviate.connect_to_local(
+                    host=self.weaviate_host,
+                    port=self.weaviate_port,
+                    grpc_port=50051
+                )
+                
+                if not client.is_ready():
+                    return {
+                        "success": False,
+                        "error": "Weaviate server not ready"
+                    }
+                
+                # Check if collection exists
+                if not client.collections.exists(collection_name):
+                    return {
+                        "success": False,
+                        "error": f"Collection '{collection_name}' does not exist"
+                    }
+                
+                # Get collection and count
+                collection = client.collections.get(collection_name)
+                result = collection.aggregate.over_all(total_count=True)
+                count = result.total_count
+                
+                # Get collection config
+                config = collection.config.get()
+                
                 return {
-                    "success": False,
-                    "error": "Weaviate server not ready"
+                    "success": True,
+                    "count": count,
+                    "collection_name": collection_name,
+                    "vectorizer": "none",  # We're using custom vectors
+                    "index_type": "HNSW",  # Default for Weaviate
+                    "distance_metric": "COSINE"  # Default for Weaviate
                 }
             
-            # Check if collection exists
-            if not client.collections.exists(collection_name):
-                return {
-                    "success": False,
-                    "error": f"Collection '{collection_name}' does not exist"
-                }
-            
-            # Get collection and count
-            collection = client.collections.get(collection_name)
-            result = collection.aggregate.over_all(total_count=True)
-            count = result.total_count
-            
-            # Get collection config
-            config = collection.config.get()
-            
+        except TimeoutError as e:
             return {
-                "success": True,
-                "count": count,
-                "collection_name": collection_name,
-                "vectorizer": "none",  # We're using custom vectors
-                "index_type": "HNSW",  # Default for Weaviate
-                "distance_metric": "COSINE"  # Default for Weaviate
+                "success": False,
+                "error": f"Timeout: {str(e)}",
+                "collection_name": collection_name
             }
-            
         except Exception as e:
             return {
                 "success": False,
@@ -363,28 +386,34 @@ class RecordCounter:
     
     
     def count_all_collections(self):
-        """Count records in all Qdrant collections"""
+        """Count records in all Qdrant collections with timeout"""
         try:
-            collections = self.qdrant_client.get_collections()
-            collection_counts = {}
-            
-            for collection in collections.collections:
-                try:
-                    collection_info = self.qdrant_client.get_collection(collection.name)
-                    collection_counts[collection.name] = {
-                        "count": collection_info.points_count,
-                        "vector_dim": collection_info.config.params.vectors.size,
-                        "distance_metric": collection_info.config.params.vectors.distance,
-                        "indexed_vectors": collection_info.indexed_vectors_count
-                    }
-                except Exception as e:
-                    collection_counts[collection.name] = {
-                        "error": str(e)
-                    }
-            
+            with timeout_handler(self.timeout_seconds):
+                collections = self.qdrant_client.get_collections()
+                collection_counts = {}
+                
+                for collection in collections.collections:
+                    try:
+                        collection_info = self.qdrant_client.get_collection(collection.name)
+                        collection_counts[collection.name] = {
+                            "count": collection_info.points_count,
+                            "vector_dim": collection_info.config.params.vectors.size,
+                            "distance_metric": collection_info.config.params.vectors.distance,
+                            "indexed_vectors": collection_info.indexed_vectors_count
+                        }
+                    except Exception as e:
+                        collection_counts[collection.name] = {
+                            "error": str(e)
+                        }
+                
+                return {
+                    "success": True,
+                    "collections": collection_counts
+                }
+        except TimeoutError as e:
             return {
-                "success": True,
-                "collections": collection_counts
+                "success": False,
+                "error": f"Timeout: {str(e)}"
             }
         except Exception as e:
             return {
@@ -442,9 +471,13 @@ class RecordCounter:
             if milvus_result["success"]:
                 print(f"  Collection: {milvus_result['collection_name']}")
                 print(f"  Records: {milvus_result['count']:,}")
-                print(f"  Vector Dimension: {milvus_result['vector_dim']}")
-                print(f"  Index Type: {milvus_result['index_type']}")
-                print(f"  Metric Type: {milvus_result['metric_type']}")
+                # Only print additional info if available
+                if 'vector_dim' in milvus_result:
+                    print(f"  Vector Dimension: {milvus_result['vector_dim']}")
+                if 'index_type' in milvus_result:
+                    print(f"  Index Type: {milvus_result['index_type']}")
+                if 'metric_type' in milvus_result:
+                    print(f"  Metric Type: {milvus_result['metric_type']}")
             else:
                 print(f"  ❌ Error: {milvus_result['error']}")
         
@@ -585,9 +618,8 @@ Examples:
     db_group.add_argument("--timescale-only", action="store_true", help="Count records only in TimescaleDB")
     db_group.add_argument("--milvus-only", action="store_true", help="Count records only in Milvus")
     db_group.add_argument("--weaviate-only", action="store_true", help="Count records only in Weaviate")
-
-    # Legacy options for backwards compatibility
-    parser.add_argument("--all-databases", action="store_true", help="Count records in all databases (this is the default behavior)")
+    db_group.add_argument("--all", action="store_true", help="Count records in all databases (default behavior)")
+    db_group.add_argument("--all-databases", action="store_true", help="Count records in all databases (this is the default behavior)")
 
     # Database connection arguments
     parser.add_argument("--qdrant-host", default="localhost", help="Qdrant host (default: localhost)")
@@ -606,6 +638,9 @@ Examples:
     parser.add_argument("--milvus-port", type=int, default=19530, help="Milvus port (default: 19530)")
     parser.add_argument("--weaviate-host", default="localhost", help="Weaviate host (default: localhost)")
     parser.add_argument("--weaviate-port", type=int, default=8080, help="Weaviate port (default: 8080)")
+    
+    # Timeout configuration
+    parser.add_argument("--timeout", type=int, default=30, help="Timeout in seconds for database operations (default: 30)")
 
     args = parser.parse_args()
 
@@ -626,6 +661,7 @@ Examples:
         milvus_port=args.milvus_port,
         weaviate_host=args.weaviate_host,
         weaviate_port=args.weaviate_port,
+        timeout_seconds=args.timeout
     )
 
     try:
