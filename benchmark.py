@@ -740,8 +740,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    # Apply PostgreSQL session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
@@ -759,8 +759,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 results = []
                 with conn.cursor() as cur:
-                    # Apply optimizations once
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    # Apply PostgreSQL session optimizations once
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     for query_vector in query_vectors:
                         cur.execute("""
@@ -779,8 +779,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    # Apply PostgreSQL session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
@@ -811,14 +811,14 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    # Apply PostgreSQL session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     # Insert with created_at for partitioning
                     cur.execute("""
                         INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata, created_at)
                         VALUES (%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)
-                        ON CONFLICT (vector_id, created_at) DO UPDATE SET
+                        ON CONFLICT (vector_id) DO UPDATE SET
                         embedding = EXCLUDED.embedding,
                         text_content = EXCLUDED.text_content,
                         metadata = EXCLUDED.metadata,
@@ -834,8 +834,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply optimizations
-                    cur.execute("SELECT optimize_for_vector_queries();")
+                    # Apply PostgreSQL session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     # Try to use optimized bulk insert function first
                     try:
@@ -843,31 +843,39 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                         embeddings = [data["vector"] for data in test_data_list]
                         text_contents = [data["payload"]["text_content"] for data in test_data_list]
                         metadatas = [json.dumps(data["payload"]["metadata"]) for data in test_data_list]
-                        
+
                         cur.execute("""
-                            SELECT bulk_insert_vectors_optimized(%s::BIGINT[], %s::VECTOR[], %s::TEXT[], %s::JSONB[]);
+                            SELECT bulk_insert_vectors(%s::BIGINT[], %s::VECTOR[], %s::TEXT[], %s::JSONB[]);
                         """, (vector_ids, embeddings, text_contents, metadatas))
                         conn.commit()
                     except Exception:
-                        # Fallback to manual batch insert
+                        # Fallback to optimized batch insert using execute_values
+                        from psycopg2.extras import execute_values
                         conn.rollback()
-                        values = []
+
+                        formatted_data = []
                         for data in test_data_list:
-                            values.append(cur.mogrify("(%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)", (
-                                data["id"], data["vector"],
+                            formatted_data.append((
+                                data["id"],
+                                data["vector"],
                                 data["payload"]["text_content"],
                                 json.dumps(data["payload"]["metadata"])
-                            )).decode('utf-8'))
+                            ))
 
-                        cur.execute(f"""
-                            INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata, created_at)
-                            VALUES {', '.join(values)}
-                            ON CONFLICT (vector_id, created_at) DO UPDATE SET
-                            embedding = EXCLUDED.embedding,
-                            text_content = EXCLUDED.text_content,
-                            metadata = EXCLUDED.metadata,
-                            updated_at = CURRENT_TIMESTAMP;
-                        """)
+                        execute_values(
+                            cur,
+                            """INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata, created_at)
+                               VALUES %s
+                               ON CONFLICT (vector_id, created_at) DO UPDATE SET
+                               embedding = EXCLUDED.embedding,
+                               text_content = EXCLUDED.text_content,
+                               metadata = EXCLUDED.metadata,
+                               updated_at = CURRENT_TIMESTAMP""",
+                            formatted_data,
+                            template="(%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)",
+                            page_size=1000,
+                            fetch=False
+                        )
                         conn.commit()
             finally:
                 conn.close()
@@ -904,8 +912,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_operations();")
+                    # Apply TimescaleDB session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     # Use standard vector search with TimescaleDB table
                     cur.execute("""
@@ -924,8 +932,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             try:
                 results = []
                 with conn.cursor() as cur:
-                    # Apply TimescaleDB optimizations once
-                    cur.execute("SELECT optimize_for_vector_operations();")
+                    # Apply TimescaleDB session optimizations once
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     for query_vector in query_vectors:
                         cur.execute("""
@@ -944,8 +952,8 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_operations();")
+                    # Apply TimescaleDB session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     cur.execute("""
                         SELECT vector_id, text_content, metadata,
@@ -976,13 +984,18 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_operations();")
+                    # Apply TimescaleDB session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
                     # Insert with created_at for hypertable partitioning
                     cur.execute("""
                         INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata, created_at)
-                        VALUES (%s, %s::vector, %s, %s, CURRENT_TIMESTAMP);
+                        VALUES (%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (vector_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        text_content = EXCLUDED.text_content,
+                        metadata = EXCLUDED.metadata,
+                        updated_at = CURRENT_TIMESTAMP;
                     """, (test_data["id"], test_data["vector"],
                          test_data["payload"]["text_content"],
                          json.dumps(test_data["payload"]["metadata"])))
@@ -994,36 +1007,36 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
             conn = psycopg2.connect(**self.postgres_ts_config)
             try:
                 with conn.cursor() as cur:
-                    # Apply TimescaleDB optimizations
-                    cur.execute("SELECT optimize_for_vector_operations();")
+                    # Apply TimescaleDB session optimizations
+                    cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                     
-                    # Try to use optimized bulk insert function first
-                    try:
-                        vector_ids = [data["id"] for data in test_data_list]
-                        embeddings = [data["vector"] for data in test_data_list]
-                        text_contents = [data["payload"]["text_content"] for data in test_data_list]
-                        metadatas = [json.dumps(data["payload"]["metadata"]) for data in test_data_list]
-                        
-                        cur.execute("""
-                            SELECT bulk_insert_vectors_optimized(%s::BIGINT[], %s::VECTOR[], %s::TEXT[], %s::JSONB[]);
-                        """, (vector_ids, embeddings, text_contents, metadatas))
-                        conn.commit()
-                    except Exception:
-                        # Fallback to manual batch insert
-                        conn.rollback()
-                        values = []
-                        for data in test_data_list:
-                            values.append(cur.mogrify("(%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)", (
-                                data["id"], data["vector"],
-                                data["payload"]["text_content"],
-                                json.dumps(data["payload"]["metadata"])
-                            )).decode('utf-8'))
+                    # Use optimized batch insert with execute_values (TimescaleDB works best with fewer workers)
+                    from psycopg2.extras import execute_values
 
-                        cur.execute(f"""
-                            INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata, created_at)
-                            VALUES {', '.join(values)};
-                        """)
-                        conn.commit()
+                    formatted_data = []
+                    for data in test_data_list:
+                        formatted_data.append((
+                            data["id"],
+                            data["vector"],
+                            data["payload"]["text_content"],
+                            json.dumps(data["payload"]["metadata"])
+                        ))
+
+                    execute_values(
+                        cur,
+                        """INSERT INTO vector_embeddings_ts (vector_id, embedding, text_content, metadata, created_at)
+                           VALUES %s
+                           ON CONFLICT (vector_id) DO UPDATE SET
+                           embedding = EXCLUDED.embedding,
+                           text_content = EXCLUDED.text_content,
+                           metadata = EXCLUDED.metadata,
+                           updated_at = CURRENT_TIMESTAMP""",
+                        formatted_data,
+                        template="(%s, %s::vector, %s, %s, CURRENT_TIMESTAMP)",
+                        page_size=1000,
+                        fetch=False
+                    )
+                    conn.commit()
             finally:
                 conn.close()
 
@@ -1437,7 +1450,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                     conn = psycopg2.connect(**self.postgres_config)
                     try:
                         with conn.cursor() as cur:
-                            cur.execute("SELECT optimize_for_vector_queries();")
+                            cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                             cur.execute("""
                                 SELECT vector_id, text_content, metadata,
                                        1 - (embedding <=> %s::vector) AS similarity
@@ -1465,7 +1478,7 @@ class ComprehensiveBenchmarkSuite(StandardizedBenchmarkOperations):
                     conn = psycopg2.connect(**self.postgres_config)
                     try:
                         with conn.cursor() as cur:
-                            cur.execute("SELECT optimize_for_vector_queries();")
+                            cur.execute("SET work_mem = '256MB'; SET maintenance_work_mem = '512MB';")
                             test_data = self.generate_test_vectors(1, self.next_id)[0]
                             cur.execute("""
                                 INSERT INTO vector_embeddings (vector_id, embedding, text_content, metadata, created_at)

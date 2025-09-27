@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Record Counter Script
-Counts records in vector databases: Qdrant, PostgreSQL, Milvus, and Weaviate.
-By default, counts all databases. Use --qdrant-only to count only Qdrant and PostgreSQL.
-"""
 
 import argparse
 from qdrant_client import QdrantClient
@@ -533,8 +528,8 @@ class RecordCounter:
                 print(f"  📈 {max_db} has {diff:,} more records than {min_db}")
     
     def run_count(self, collection_name="test_vectors", show_all_collections=False,
-                  qdrant_only=False, postgres_only=False, timescale_only=False,
-                  milvus_only=False, weaviate_only=False):
+                  qdrant=False, postgres=False, timescale=False,
+                  milvus=False, weaviate=False):
         """Run the record counting process"""
         print(f"Counting records in '{collection_name}' collection...")
 
@@ -546,7 +541,7 @@ class RecordCounter:
         weaviate_result = None
 
         # Count based on selected options
-        if not any([qdrant_only, postgres_only, timescale_only, milvus_only, weaviate_only]):
+        if not any([qdrant, postgres, timescale, milvus, weaviate]):
             # Default: count all databases
             print("Counting records in all databases...")
             qdrant_result = self.count_qdrant_records(collection_name)
@@ -556,25 +551,25 @@ class RecordCounter:
             weaviate_result = self.count_weaviate_records("TestVectors")
         else:
             # Count only selected databases
-            if qdrant_only:
+            if qdrant:
                 print("Counting records in Qdrant only...")
                 qdrant_result = self.count_qdrant_records(collection_name)
-            if postgres_only:
+            if postgres:
                 print("Counting records in PostgreSQL only...")
                 postgres_result = self.count_postgres_records()
-            if timescale_only:
+            if timescale:
                 print("Counting records in TimescaleDB only...")
                 postgres_ts_result = self.count_postgres_ts_records()
-            if milvus_only:
+            if milvus:
                 print("Counting records in Milvus only...")
                 milvus_result = self.count_milvus_records(collection_name)
-            if weaviate_only:
+            if weaviate:
                 print("Counting records in Weaviate only...")
                 weaviate_result = self.count_weaviate_records("TestVectors")
 
         # Count all collections if requested (only for Qdrant)
         all_collections = None
-        if show_all_collections and (qdrant_result is not None or not any([postgres_only, timescale_only, milvus_only, weaviate_only])):
+        if show_all_collections and (qdrant_result is not None or not any([postgres, timescale, milvus, weaviate])):
             all_collections = self.count_all_collections()
 
         # Print summary
@@ -597,11 +592,11 @@ def main():
         epilog="""
 Examples:
   python count_records.py                          # Count all databases (default)
-  python count_records.py --qdrant-only            # Count only Qdrant
-  python count_records.py --postgres-only          # Count only PostgreSQL
-  python count_records.py --timescale-only         # Count only TimescaleDB
-  python count_records.py --milvus-only            # Count only Milvus
-  python count_records.py --weaviate-only          # Count only Weaviate
+  python count_records.py --qdrant            # Count only Qdrant
+  python count_records.py --postgres          # Count only PostgreSQL
+  python count_records.py --timescale         # Count only TimescaleDB
+  python count_records.py --milvus            # Count only Milvus
+  python count_records.py --weaviate          # Count only Weaviate
   python count_records.py --collection my_vectors  # Specify collection name
   python count_records.py --all-collections        # Show all Qdrant collections
         """
@@ -613,11 +608,11 @@ Examples:
 
     # Database selection options (mutually exclusive with all-databases)
     db_group = parser.add_mutually_exclusive_group()
-    db_group.add_argument("--qdrant-only", action="store_true", help="Count records only in Qdrant")
-    db_group.add_argument("--postgres-only", action="store_true", help="Count records only in PostgreSQL")
-    db_group.add_argument("--timescale-only", action="store_true", help="Count records only in TimescaleDB")
-    db_group.add_argument("--milvus-only", action="store_true", help="Count records only in Milvus")
-    db_group.add_argument("--weaviate-only", action="store_true", help="Count records only in Weaviate")
+    db_group.add_argument("--qdrant", action="store_true", help="Count records only in Qdrant")
+    db_group.add_argument("--postgres", action="store_true", help="Count records only in PostgreSQL")
+    db_group.add_argument("--timescale", action="store_true", help="Count records only in TimescaleDB")
+    db_group.add_argument("--milvus", action="store_true", help="Count records only in Milvus")
+    db_group.add_argument("--weaviate", action="store_true", help="Count records only in Weaviate")
     db_group.add_argument("--all", action="store_true", help="Count records in all databases (default behavior)")
     db_group.add_argument("--all-databases", action="store_true", help="Count records in all databases (this is the default behavior)")
 
@@ -668,11 +663,11 @@ Examples:
         results = counter.run_count(
             collection_name=args.collection,
             show_all_collections=args.all_collections,
-            qdrant_only=args.qdrant_only,
-            postgres_only=args.postgres_only,
-            timescale_only=args.timescale_only,
-            milvus_only=args.milvus_only,
-            weaviate_only=args.weaviate_only
+            qdrant=args.qdrant,
+            postgres=args.postgres,
+            timescale=args.timescale,
+            milvus=args.milvus,
+            weaviate=args.weaviate
         )
     except KeyboardInterrupt:
         print("\nCount interrupted by user")

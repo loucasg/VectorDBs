@@ -6,7 +6,15 @@
       "WebSearch",
       "Bash(python3:*)",
       "Bash(chmod:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(docker-compose:*)",
+      "Bash(./start-milvus-cluster.sh:*)",
+      "Bash(docker run:*)",
+      "Bash(telnet:*)",
+      "Bash(docker:*)",
+      "Bash(killall:*)",
+      "Bash(open:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
