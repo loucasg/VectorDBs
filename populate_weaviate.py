@@ -63,9 +63,9 @@ class WeaviatePopulator:
                 print(f"Creating new collection '{self.collection_name}'...")
                 
                 # Define collection schema using v4 API
+                # For manual vectors, we don't need vector_config or can set it to None
                 collection = self.client.collections.create(
                     name=self.collection_name,
-                    vector_config=wvc.config.Configure.Vectorizer.none(),
                     properties=[
                         wvc.config.Property(
                             name="text_content",
