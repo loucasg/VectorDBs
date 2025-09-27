@@ -5,3 +5,4 @@ results/*
 populate_all.sh
 data/*
 .claude/*
+data
