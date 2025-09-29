@@ -6,3 +6,4 @@ populate_all.sh
 data/*
 .claude/*
 data
+.claude/settings.local.json

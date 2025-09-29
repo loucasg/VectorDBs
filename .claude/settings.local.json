@@ -14,7 +14,9 @@
       "Bash(docker:*)",
       "Bash(killall:*)",
       "Bash(open:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Read(//Volumes/Media/Workspace/VectorDBs/data/**)",
+      "Read(//Users/loucas.gatzoulis/**)"
     ],
     "deny": [],
     "ask": []
